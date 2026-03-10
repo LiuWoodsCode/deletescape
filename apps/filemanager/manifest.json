@@ -1,0 +1,10 @@
+{
+  "id": "filemanager",
+  "displayName": "Files",
+  "version": "0.1.0",
+  "build": 1,
+  "permissions": [],
+  "hidden": false,
+  "icon": "Assets/icon.png"
+}
+

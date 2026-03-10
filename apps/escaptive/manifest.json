@@ -1,0 +1,10 @@
+{
+  "appId": "escaptive",
+  "bundleId": "com.deletescapeos.escaptive",
+  "displayName": "EscCaptive",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png",
+  "hidden": true
+}

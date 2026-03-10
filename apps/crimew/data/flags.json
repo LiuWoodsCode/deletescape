@@ -1,0 +1,77 @@
+{
+    "schema_version": 1,
+    "flags": [
+        {
+            "id": "user_data_management",
+            "name": "User data management in settings",
+            "description": "Manage your browsing data, including history, cookies, and cache",
+            "default": "disabled",
+            "choices": [
+                {
+                    "id": "enabled",
+                    "name": "Enable",
+                    "description": "Show user data management in settings"
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disable",
+                    "description": "Hide user data management"
+                }
+            ]
+        },
+        {
+            "id": "site_permission_settings",
+            "name": "Site permission settings",
+            "description": "Control what permissions websites can request, such as camera, microphone, and location",
+            "default": "disabled",
+            "choices": [
+                {
+                    "id": "enabled",
+                    "name": "Enable",
+                    "description": "Show site permission settings"
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disable",
+                    "description": "Hide site permission settings"
+                }
+            ]
+        },
+        {
+            "id": "new_omnibox",
+            "name": "New omnibox",
+            "description": "Enable the new omnibox with search provider support and live suggestions",
+            "default": "disabled",
+            "choices": [
+                {
+                    "id": "enabled",
+                    "name": "Enable",
+                    "description": "Use the new omnibox"
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disable",
+                    "description": "Use the legacy address bar"
+                }
+            ]
+        },
+        {
+            "id": "deadname_replacement_engine",
+            "name": "Deadname replacement for trans and nonbinary people",
+            "description": "Attempt to replace deadnames with chosen names on websites.",
+            "default": "disabled",
+            "choices": [
+                {
+                    "id": "enabled",
+                    "name": "Enable",
+                    "description": "Replace deadnames on websites"
+                },
+                {
+                    "id": "disabled",
+                    "name": "Disable",
+                    "description": "Don't replace deadnames"
+                }
+            ]
+        }
+    ]
+}  

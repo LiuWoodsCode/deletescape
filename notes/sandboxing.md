@@ -1,0 +1,1 @@
+In Deletescape, all user installed applications should be sandboxed and only allowed to access certain parts of the system. 

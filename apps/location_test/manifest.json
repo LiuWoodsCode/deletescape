@@ -1,0 +1,8 @@
+{
+  "id": "location_test",
+  "displayName": "Location Test",
+  "version": "0.1",
+  "main": "main.py",
+  "icon": "Assets/icon.png",
+  "hidden": false
+}

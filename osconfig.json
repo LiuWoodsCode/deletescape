@@ -1,0 +1,10 @@
+{
+  "os_name": "Project Deletescape",
+  "os_version": "0.1.0",
+  "build_number": 1,
+  "build_id": "deletescape_notbuilt",
+  "channel": "dev",
+  "builder_username": "sampleUser",
+  "builder_hostname": "samplePC",
+  "build_datetime": "2026-01-01T11:16:28-05:00"
+}

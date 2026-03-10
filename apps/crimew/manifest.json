@@ -1,0 +1,10 @@
+{
+  "appId": "crimew",
+  "bundleId": "com.deletescapeos.crimew",
+  "displayName": "Project Crimew",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": ["network"],
+  "icon": "Assets/icon.png",
+  "hidden": false
+}

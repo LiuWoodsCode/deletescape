@@ -1,0 +1,8 @@
+{
+  "appId": "dsuitest",
+  "bundleId": "com.deletescapeos.dsuitest",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png"
+}

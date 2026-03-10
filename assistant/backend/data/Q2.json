@@ -1,0 +1,160 @@
+{
+    "id": "Q2",
+    "type": "item",
+    "labels": {
+        "en": {
+            "language": "en",
+            "value": "Zac Bowden"
+        }
+    },
+    "descriptions": {
+        "en": {
+            "language": "en",
+            "value": "British technology journalist known for covering Microsoft, Windows, and Surface at Windows Central"
+        }
+    },
+    "aliases": {
+        "en": [
+            {
+                "language": "en",
+                "value": "Zachary Bowden"
+            },
+            {
+                "language": "en",
+                "value": "Zac from Windows Central"
+            }
+        ]
+    },
+    "claims": {
+        "P31": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P31",
+                    "datatype": "wikibase-item",
+                    "datavalue": {
+                        "value": {
+                            "entity-type": "item",
+                            "id": "Q5"
+                        },
+                        "type": "wikibase-entityid"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P106": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P106",
+                    "datatype": "wikibase-item",
+                    "datavalue": {
+                        "value": {
+                            "entity-type": "item",
+                            "id": "Q1930187"
+                        },
+                        "type": "wikibase-entityid"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P19": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P19",
+                    "datatype": "wikibase-item",
+                    "datavalue": {
+                        "value": {
+                            "entity-type": "item",
+                            "id": "Q84"
+                        },
+                        "type": "wikibase-entityid"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P27": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P27",
+                    "datatype": "wikibase-item",
+                    "datavalue": {
+                        "value": {
+                            "entity-type": "item",
+                            "id": "Q145"
+                        },
+                        "type": "wikibase-entityid"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P856": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P856",
+                    "datatype": "url",
+                    "datavalue": {
+                        "value": "https://www.windowscentral.com/author/zac-bowden",
+                        "type": "string"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P2002": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P2002",
+                    "datatype": "external-id",
+                    "datavalue": {
+                        "value": "zacbowden",
+                        "type": "string"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ],
+        "P18": [
+            {
+                "mainsnak": {
+                    "snaktype": "value",
+                    "property": "P18",
+                    "datatype": "commonsMedia",
+                    "datavalue": {
+                        "value": "Zac_Bowden_2024.png",
+                        "type": "string"
+                    }
+                },
+                "type": "statement",
+                "rank": "normal"
+            }
+        ]
+    },
+    "sitelinks": {
+        "enwiki": {
+            "site": "enwiki",
+            "title": "Zac Bowden",
+            "url": "https://en.wikipedia.org/wiki/Zac_Bowden"
+        },
+        "windowscentral": {
+            "site": "windowscentral",
+            "title": "Author: Zac Bowden",
+            "url": "https://www.windowscentral.com/author/zac-bowden"
+        }
+    },
+    "speechText": "Zac Bowden is a British technology journalist known for covering Microsoft, Windows, and Surface at Windows Central."
+}

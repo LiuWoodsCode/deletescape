@@ -1,0 +1,9 @@
+{
+  "appId": "notifytester",
+  "bundleId": "com.deletescapeos.notifytester",
+  "displayName": "Notify Tester",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png"
+}

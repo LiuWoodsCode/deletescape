@@ -1,0 +1,10 @@
+{
+  "appId": "home",
+  "bundleId": "com.deletescapeos.home",
+  "displayName": "Home",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png",
+  "hidden": true
+}

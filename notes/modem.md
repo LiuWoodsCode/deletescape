@@ -1,0 +1,3 @@
+Modem support as of 2026-02-25 is very basic if not most likely completely broken. Examples include:
+* No support for CMAS/WEA
+* etc...

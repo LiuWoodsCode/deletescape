@@ -1,0 +1,9 @@
+{
+  "id": "telephonyService",
+  "displayName": "Telephony Service",
+  "version": "1.0.0",
+  "build": 1,
+  "hidden": true,
+  "autostart": true,
+  "permissions": []
+}

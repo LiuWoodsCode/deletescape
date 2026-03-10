@@ -1,0 +1,10 @@
+{
+  "appId": "gallery",
+  "bundleId": "com.deletescapeos.gallery",
+  "displayName": "Gallery",
+  "file_handlers": [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"],
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png"
+}

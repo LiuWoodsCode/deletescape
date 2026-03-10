@@ -1,0 +1,21 @@
+{
+  "manufacturer": "motorola",
+  "model": "borneo",
+  "model_name": "moto g power (2021)",
+  "serial_number": "",
+  "hardware_revision": "",
+  "imei": "",
+  "wifi_mac": "",
+  "bluetooth_mac": "",
+  "has_hw_home": false,
+  "drivers": {
+    "battery": "none",
+    "modem": "none",
+    "location": "none",
+    "wifi": "none",
+    "display": "none",
+    "audio": "none",
+    "sensors": "none",
+    "vibration": "none"
+  }
+}

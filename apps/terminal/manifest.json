@@ -1,0 +1,10 @@
+{
+  "appId": "terminal",
+  "bundleId": "com.deletescapeos.terminal",
+  "displayName": "Terminal",
+  "build": 1,
+  "version": "0.1.0",
+  "icon": "Assets/icon.png",
+  "permissions": []
+}
+

@@ -1,0 +1,10 @@
+{
+  "appId": "system",
+  "bundleId": "com.deletescapeos.system",
+  "displayName": "deletescapeOS",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "icon": "Assets/icon.png",
+  "hidden": true
+}

@@ -1,0 +1,9 @@
+{
+  "id": "dialer",
+  "displayName": "Dialer",
+  "version": "0.1",
+  "build": 1,
+  "permissions": ["telephony"],
+  "hidden": false,
+  "icon": "Assets/icon.png"
+}

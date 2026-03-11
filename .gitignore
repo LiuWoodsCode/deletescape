@@ -3,3 +3,4 @@ userdata/
 logs/
 config.json
 *.pyc
+*/__pycache__/

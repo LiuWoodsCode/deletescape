@@ -370,7 +370,7 @@ def main():
                     log_dir = Path("./logs")
                     log_dir.mkdir(parents=True, exist_ok=True)
 
-                    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+                    ts = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
                     panic_file = log_dir / f"panic_{ts}.json"
 
                     with panic_file.open("w", encoding="utf-8") as f:

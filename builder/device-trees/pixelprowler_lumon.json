@@ -1,5 +1,5 @@
 {
-  "manufacturer": "Grizzco Industries",
+  "manufacturer": "daPixelProwler",
   "model": "lumon",
   "model_name": "Project Lumon",
   "serial_number": "XXXXXXXXX",
@@ -9,13 +9,13 @@
   "bluetooth_mac": "F0:F0:F0:F0:F0:F0",
   "has_hw_home": false,
   "drivers": {
-    "battery": "winnt",
-    "modem": "simulated",
-    "location": "simulated",
+    "battery": "none",
+    "modem": "none",
+    "location": "none",
     "wifi": "netsh",
-    "display": "simulated",
-    "audio": "simulated",
-    "sensors": "simulated",
-    "vibration": "simulated"
+    "display": "none",
+    "audio": "none",
+    "sensors": "none",
+    "vibration": "none"
   }
 }

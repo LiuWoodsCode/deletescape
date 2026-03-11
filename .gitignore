@@ -2,3 +2,4 @@
 userdata/
 logs/
 config.json
+*.pyc

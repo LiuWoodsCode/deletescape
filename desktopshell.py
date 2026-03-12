@@ -161,8 +161,8 @@ class MdiShell(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Deletescape MDI Shell (Minimal)")
-        # self.showFullScreen()
-        self.show()
+        self.showFullScreen()
+        # self.show()
         # Central MDI area
         self.mdi = ImageMdiArea(".\\assets\\wallpaper\\test_desktopshell_wal.png")
         self.mdi.setViewMode(QMdiArea.SubWindowView)

@@ -187,7 +187,6 @@ class App:
         self._sync_display()
 
     def _equals(self) -> None:
-        print(0/0)
         if self._pending_op is None:
             # No operator: just commit entry to accumulator.
             if self._entry:

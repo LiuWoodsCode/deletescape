@@ -513,7 +513,7 @@ class NotificationCard(QFrame):
         # Put text layout into root
         lay.addLayout(text_layout, 1)
 
-        # self.set_icon_pixmap(QPixmap(icon))
+        self.set_icon_pixmap(QPixmap(icon))
 
         if timestamp:
             self._time.setText(self._format_time_ago(timestamp))
@@ -870,11 +870,10 @@ class SoftwareHomeBarWidget(QWidget):
 
 
 class Deletescape(QMainWindow):
-    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True, fullscreen_screen=None):
+    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True):
         super().__init__()
 
         log.info("Deletescape init")
-
         self.setWindowTitle("Deletescape UI")
         self.resize(480, 854)
         
@@ -908,9 +907,6 @@ class Deletescape(QMainWindow):
         self._handling_crash = False
         self._locked = True
         self._has_unlocked_once = False
-        self._fullscreen_requested = bool(full_screen)
-        self._fullscreen_screen = fullscreen_screen
-        self._fullscreen_applied = False
 
         self._running_apps: dict[str, RunningApp] = {}
 
@@ -958,11 +954,8 @@ class Deletescape(QMainWindow):
         self.background_tasks = BackgroundTaskManager(window=self)
 
         self._sync_overlay_geometry()
-        if self._fullscreen_requested and self._fullscreen_screen is not None:
-            try:
-                self.setGeometry(self._fullscreen_screen.geometry())
-            except Exception:
-                log.exception("Failed to pre-position shell on requested fullscreen display")
+        if full_screen:
+            self.showFullScreen()
         # Load available apps from the apps/ folder (folder-based apps)
         self.apps: dict[str, AppDescriptor] = self.load_apps()
         log.info("Apps loaded", extra={"count": len(self.apps)})
@@ -1002,29 +995,6 @@ class Deletescape(QMainWindow):
 
         # Apply wallpapers after UI is ready.
         self.apply_wallpapers()
-
-    def _show_fullscreen_on_screen(self, screen) -> None:
-        try:
-            if screen is not None:
-                handle = self.windowHandle()
-                if handle is not None:
-                    handle.setScreen(screen)
-                self.showNormal()
-                self.setGeometry(screen.geometry())
-        except Exception:
-            log.exception("Failed to place shell on requested fullscreen display")
-        self.showFullScreen()
-
-    def _apply_pending_fullscreen(self) -> None:
-        if not self._fullscreen_requested or self._fullscreen_applied:
-            return
-        self._fullscreen_applied = True
-        self._show_fullscreen_on_screen(self._fullscreen_screen)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if self._fullscreen_requested and not self._fullscreen_applied:
-            QTimer.singleShot(0, self._apply_pending_fullscreen)
 
     def _autostart_apps(self) -> None:
         try:

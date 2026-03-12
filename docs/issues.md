@@ -88,3 +88,6 @@ The home screen wallpaper displays at the wrong size, being very small instead o
 
 ![](media/homescreenwpsmall.png)
 
+# Qt Multimedia causes transition issues between apps
+
+After launching any app that uses Qt Multimedia (e.g Camera), every subsequent app launch will now cause the container to go blank until the app loads.

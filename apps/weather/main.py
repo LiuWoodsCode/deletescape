@@ -223,17 +223,7 @@ class App:
         place_font.setPointSize(18)
         place_font.setBold(True)
         self._place_title.setFont(place_font)
-        root.addWidget(self._place_title)
-
-        self._subtitle = QLabel("")
-        self._subtitle.setAlignment(Qt.AlignCenter)
-        self._subtitle.setWordWrap(True)
-        root.addWidget(self._subtitle)
-
-        self._updated_label = QLabel("")
-        self._updated_label.setAlignment(Qt.AlignCenter)
-        self._updated_label.setWordWrap(True)
-        root.addWidget(self._updated_label)
+        # root.addWidget(self._place_title)
 
         current_row = QHBoxLayout()
         current_row.setSpacing(12)
@@ -270,6 +260,16 @@ class App:
         self._meta_label.setWordWrap(True)
         right.addWidget(self._meta_label)
 
+        self._subtitle = QLabel("")
+        self._subtitle.setAlignment(Qt.AlignCenter)
+        self._subtitle.setWordWrap(True)
+        root.addWidget(self._subtitle)
+
+        self._updated_label = QLabel("")
+        self._updated_label.setAlignment(Qt.AlignCenter)
+        self._updated_label.setWordWrap(True)
+        root.addWidget(self._updated_label)
+        
         # Mode buttons (touch friendly)
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)

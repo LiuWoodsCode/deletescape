@@ -740,6 +740,7 @@ class SettingsWindow(QMainWindow):
                 "Chrome/142.0.0.0 Mobile Safari/537.36"
             )
 
+
             self.web.setUrl(QUrl("https:/captive.apple.com"))
 
         def launch_dialog() -> None:
@@ -747,7 +748,7 @@ class SettingsWindow(QMainWindow):
             dlg = InWindowDialog(
                 self._dialog_host(),
                 title="No internet connection",
-                message="If you didn't complete the captive portal, no internet will occur. ",
+                message="If you didn't complete the captive portal, no internet will occur.",
                 confirm_text="Apply",
                 cancel_text="Cancel",
             )

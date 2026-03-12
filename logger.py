@@ -144,7 +144,7 @@ def configure(
         "%(levelname)s %(message)s"
     )
     formatter = _IsoFormatter(fmt=fmt)
-
+    logging.captureWarnings(True)
     stream = logging.StreamHandler(stream=sys.stdout)
     stream.setLevel(level)
     stream.setFormatter(formatter)

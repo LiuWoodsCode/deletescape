@@ -7,6 +7,11 @@ Currently, deletescape assumes that the user can see 100% of the screen, with no
 # Assistant integration with deletescape
 Work on integrating the digital assistant with the operating system, for example launching applications.
 
+# Embedded deletescape
+Add necessary functionality for running deletescapeOS and applications written for it on embedded systems (think: digital signage, kiosks, etc).
+
+Some functionality nessesary f
+
 # Compliance with Online Safety Act, that one California bill, etc
 In states that require age verification and/or age attestation, the OOBE should perform a check and block setup in these regions, only allowing you to shut down the device. The message should also tell you next steps.
 

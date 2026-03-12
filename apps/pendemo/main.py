@@ -262,21 +262,7 @@ class App(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
         container.setLayout(root)
-
-        title = QLabel("Pen Demo")
-        title.setAlignment(Qt.AlignCenter)
-        title_font = title.font()
-        title_font.setPointSize(max(16, title_font.pointSize()))
-        title_font.setBold(True)
-        title.setFont(title_font)
-        root.addWidget(title)
-
-        hint = QLabel(
-            "Draw with a stylus, finger, or mouse. Stylus pressure changes the stroke width so you can verify pen input on tablets."
-        )
-        hint.setWordWrap(True)
-        root.addWidget(hint)
-
+        
         tools = QFrame()
         tools_layout = QVBoxLayout()
         tools_layout.setContentsMargins(10, 10, 10, 10)

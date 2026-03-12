@@ -512,8 +512,10 @@ class NotificationCard(QFrame):
 
         # Put text layout into root
         lay.addLayout(text_layout, 1)
-
-        self.set_icon_pixmap(QPixmap(icon))
+        try:
+            self.set_icon_pixmap(QPixmap(icon))
+        except:
+            pass
 
         if timestamp:
             self._time.setText(self._format_time_ago(timestamp))

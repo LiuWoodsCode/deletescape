@@ -1,9 +1,9 @@
 {
   "appId": "mobilebrowse",
   "bundleId": "com.deletescapeos.browser",
-  "displayName": "Browser (Orig)",
   "build": 1,
   "version": "0.1.0",
   "permissions": ["network"],
-  "icon": "Assets/icon.png"
+  "icon": "Assets/icon.png",
+  "hidden": true
 }

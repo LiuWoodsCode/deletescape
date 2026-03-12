@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 import time
 import traceback
-from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
+from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
-from PySide6.QtGui import QMovie
+from PySide6.QtGui import QGuiApplication, QMovie
 from home import Deletescape
 
 from app_health import install_exception_hooks
@@ -30,17 +30,46 @@ from wallpaper import load_pixmap, scale_crop_center
 # * But we fail booting the deletescape shell
 # Currently recovery mode isn't very useful, but it might be possible to use USB networking to allow flashing a new deletescape fs
 class RecoveryWindow(QMainWindow):
-    def __init__(self, *, image_path: Path, fullscreen=False):
+    def __init__(self, *, image_path: Path, fullscreen=False, fullscreen_screen=None):
         super().__init__()
         self.setWindowTitle("Recovery")
         self.resize(480, 854)
         self._image_path = image_path
+        self._fullscreen_requested = bool(fullscreen)
+        self._fullscreen_screen = fullscreen_screen
+        self._fullscreen_applied = False
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignCenter)
         self.setCentralWidget(self._label)
-        if fullscreen:
-            self.showFullScreen()
+        if self._fullscreen_requested and self._fullscreen_screen is not None:
+            try:
+                self.setGeometry(self._fullscreen_screen.geometry())
+            except Exception:
+                pass
         self._render()
+
+    def _show_fullscreen_on_screen(self) -> None:
+        try:
+            if self._fullscreen_screen is not None:
+                handle = self.windowHandle()
+                if handle is not None:
+                    handle.setScreen(self._fullscreen_screen)
+                self.showNormal()
+                self.setGeometry(self._fullscreen_screen.geometry())
+        except Exception:
+            pass
+        self.showFullScreen()
+
+    def _apply_pending_fullscreen(self) -> None:
+        if not self._fullscreen_requested or self._fullscreen_applied:
+            return
+        self._fullscreen_applied = True
+        self._show_fullscreen_on_screen()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._fullscreen_requested and not self._fullscreen_applied:
+            QTimer.singleShot(0, self._apply_pending_fullscreen)
 
     def _render(self) -> None:
         pix = load_pixmap(str(self._image_path))
@@ -191,6 +220,67 @@ def _render_splash(label: QLabel, *, image_path: Path) -> bool:
         return False
 
 
+def _describe_screen(screen) -> dict:
+    geometry = screen.geometry()
+    return {
+        "screen_name": str(screen.name()),
+        "x": int(geometry.x()),
+        "y": int(geometry.y()),
+        "width": int(geometry.width()),
+        "height": int(geometry.height()),
+    }
+
+
+def _resolve_fullscreen_screen(*, display_spec: str | None, log):
+    screens = list(QGuiApplication.screens())
+    primary = QGuiApplication.primaryScreen()
+
+    if screens:
+        log.info("Detected displays", extra={"screens": [_describe_screen(screen) for screen in screens]})
+    else:
+        log.warning("No Qt displays detected")
+        return None
+
+    if not display_spec:
+        return primary
+
+    raw_value = str(display_spec).strip()
+    if not raw_value:
+        return primary
+
+    lowered = raw_value.lower()
+    if lowered in {"primary", "default"}:
+        return primary
+
+    try:
+        index = int(raw_value)
+    except ValueError:
+        index = None
+
+    if index is not None:
+        if 0 <= index < len(screens):
+            return screens[index]
+        log.warning(
+            "Requested fullscreen display index is out of range; falling back to primary",
+            extra={"requested_display": raw_value, "available_displays": len(screens)},
+        )
+        return primary
+
+    exact_matches = [screen for screen in screens if str(screen.name()).strip().lower() == lowered]
+    if exact_matches:
+        return exact_matches[0]
+
+    partial_matches = [screen for screen in screens if lowered in str(screen.name()).strip().lower()]
+    if partial_matches:
+        return partial_matches[0]
+
+    log.warning(
+        "Requested fullscreen display was not found; falling back to primary",
+        extra={"requested_display": raw_value, "available_displays": [_describe_screen(screen) for screen in screens]},
+    )
+    return primary
+
+
 import argparse
 
 def main():
@@ -198,6 +288,8 @@ def main():
 
     parser.add_argument("--fullscreen", action="store_true",
                         help="Make the UI fullscreen")
+    parser.add_argument("--display", type=str,
+                        help="Display index or name to use for fullscreen mode")
     parser.add_argument("--recovery", action="store_true",
                         help="Enter deletescape recovery mode")
     parser.add_argument("--no-webengine-preload", action="store_true",
@@ -277,7 +369,17 @@ def main():
     # system virtual keyboard plugin.
 
     app = QApplication(sys.argv)
-    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen)
+    fullscreen_screen = _resolve_fullscreen_screen(display_spec=args.display, log=log)
+    if args.fullscreen and fullscreen_screen is not None:
+        log.info("Using fullscreen display", extra=_describe_screen(fullscreen_screen))
+    elif args.display:
+        log.info("Display selection requested without fullscreen; selection will be ignored", extra={"requested_display": str(args.display)})
+
+    os_instance = Deletescape(
+        show_lock_screen_on_start=False,
+        full_screen=args.fullscreen,
+        fullscreen_screen=fullscreen_screen,
+    )
     os_instance.show()
 
     splash_dir = base_dir / "splash"
@@ -421,7 +523,11 @@ def main():
                     self._os_instance.deleteLater()
                 except Exception:
                     pass
-                self._recovery_window = RecoveryWindow(image_path=recovery_img, fullscreen=self._args.fullscreen)
+                self._recovery_window = RecoveryWindow(
+                    image_path=recovery_img,
+                    fullscreen=self._args.fullscreen,
+                    fullscreen_screen=fullscreen_screen,
+                )
                 self._recovery_window.show()
                 self._app.setQuitOnLastWindowClosed(True)
                 self._app.processEvents()

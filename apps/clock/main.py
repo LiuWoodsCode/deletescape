@@ -256,7 +256,6 @@ class App:
 
                 if self.timer_remaining <= timedelta():
                     self.timer_running = False
-                    raise Exception
                     self.window.notify(
                         title="Timer Done",
                         message="Time's up!",

@@ -2,6 +2,7 @@
   "manufacturer": "motorola",
   "model": "borneo",
   "model_name": "moto g power (2021)",
+  "arch": "arm64",
   "has_hw_home": false,
   "drivers": {
     "battery": "none",

@@ -2,6 +2,7 @@
   "manufacturer": "daPixelProwler",
   "model": "lumon",
   "model_name": "Project Lumon",
+  "arch": "arm64",
   "has_hw_home": false,
   "drivers": {
     "battery": "none",

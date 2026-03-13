@@ -1,0 +1,27 @@
+model_string,codename,rpi_staff_member,rpi_community_member
+Raspberry Pi Model B Rev 1.0,ebenezer-b, Ebenezer Finch,N/A
+Raspberry Pi Model B Rev 2.0,ebenezer-b-geerling,Ebenezer Finch,Jeff Geerling
+Raspberry Pi Model A Rev 2.0,ebenezer-a,Ebenezer Finch,N/A
+Raspberry Pi Model B+,ebenezer-bplus,Ebenezer Finch,N/A
+Raspberry Pi 2 Model B Rev 1.0,james-b,James Adams,N/A
+Raspberry Pi 2 Model B Rev 1.1,james-b-lindevs,James Adams,Lindevs
+Raspberry Pi 3 Model B Rev 1.0,dom-b,Dominic Plunkett,N/A
+Raspberry Pi 3 Model B Rev 1.2,dom-b-geerling,Dominic Plunkett,Jeff Geerling
+Raspberry Pi 3 Model B+,dom-bplus,Dominic Plunkett,N/A
+Raspberry Pi 3 Model A+,dom-a,Dominic Plunkett,N/A
+Raspberry Pi 4 Model B Rev 1.1,liz-b-geerling,Liz Upton,Jeff Geerling
+Raspberry Pi 4 Model B Rev 1.2,liz-b-lindevs,Liz Upton,Lindevs
+Raspberry Pi 4 Model B Rev 1.4,liz-b-lespounder,Liz Upton,Gareth Halfacree
+Raspberry Pi 400 Rev 1.0,liz-b-kb,Liz Upton,N/A
+Raspberry Pi 400 Rev 1.1,liz-b-kb-geerling,Liz Upton,Jeff Geerling
+Raspberry Pi 5 Model B Rev 1.0,eben-b,Eben Upton,N/A
+Raspberry Pi 5 Model B Rev 1.1,eben-b-jeff,Eben Upton,Jeff Geerling
+Raspberry Pi Zero Rev 1.3,zw-ebenezer,N/A,N/A
+Raspberry Pi Zero W Rev 1.1,zw-dom-wfi,N/A,N/A
+Raspberry Pi Zero 2 W Rev 1.0,zw-dom-wfi-geerling,N/A,Jeff Geerling
+Raspberry Pi Pico,rp2040,N/A,N/A
+Raspberry Pi Pico H,rp2040-h,N/A,N/A
+Raspberry Pi Pico W,rp2040-wifi,N/A,N/A
+Raspberry Pi Pico WH,rp2040-wifi-h,N/A,N/A
+Raspberry Pi Pico 2,rp2350,N/A,N/A
+Raspberry Pi Pico 2 W,rp2350-wifi,N/A,N/A

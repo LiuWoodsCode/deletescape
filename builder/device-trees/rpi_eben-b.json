@@ -1,0 +1,17 @@
+{
+  "manufacturer": "Raspberry Pi Foundation",
+  "model": "eben-b",
+  "model_name": "Raspberry Pi 5 Model B",
+  "arch": "arm64",
+  "has_hw_home": false,
+  "drivers": {
+    "battery": "psutil",
+    "modem": "none",
+    "location": "none",
+    "wifi": "nmcli",
+    "display": "none",
+    "audio": "none",
+    "sensors": "none",
+    "vibration": "none"
+  }
+}

@@ -10,6 +10,7 @@ import traceback
 from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 from PySide6.QtGui import QMovie
+import requests
 from home import Deletescape
 
 from app_health import install_exception_hooks
@@ -22,6 +23,43 @@ from logger import get_logger, install_qt_message_handler
 
 from wallpaper import load_pixmap, scale_crop_center
 
+import socket
+
+def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
+    """
+    Returns the correct splash asset for the current orientation.
+
+    Portrait:
+        bootinternal.png
+        recovery.png
+
+    Landscape:
+        bootinternal_wide.png
+        recovery_wide.png
+    """
+    if target_size.width() > target_size.height():
+        wide = base_path.with_name(base_path.stem + "_wide" + base_path.suffix)
+        if wide.exists():
+            return wide
+    return base_path
+
+def _get_wlan_ip() -> str:
+    """
+    Returns the primary outbound IPv4 address without needing psutil.
+    Works even without actual connectivity.
+    Never raises.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # doesn't actually send packets
+        s.connect(("8.8.8.8", 80))
+        requests.get("https://www.google.com")
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+    
 # this screen is very dumb
 # it only works in portrait and can't use a landscape version
 # but good thing these images are 1440p
@@ -30,20 +68,46 @@ from wallpaper import load_pixmap, scale_crop_center
 # * But we fail booting the deletescape shell
 # Currently recovery mode isn't very useful, but it might be possible to use USB networking to allow flashing a new deletescape fs
 class RecoveryWindow(QMainWindow):
-    def __init__(self, *, image_path: Path, fullscreen=False):
+    def __init__(self, *, image_path: Path, debug_info: dict | None = None, fullscreen=False):
         super().__init__()
+
         self.setWindowTitle("Recovery")
         self.resize(480, 854)
         self._image_path = image_path
+        self._debug_info = debug_info or {}
+
+        # Background splash
         self._label = QLabel(self)
         self._label.setAlignment(Qt.AlignCenter)
         self.setCentralWidget(self._label)
+
+        # Debug overlay (TOP LEFT)
+        self._debug_label = QLabel(self)
+        self._debug_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._debug_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._debug_label.setWordWrap(True)
+
+        self._debug_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(0,0,0,100);
+                color: #FFFFFF;
+                font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
+                font-size: 9px;
+            }
+        """)
+
+        self._debug_label.raise_()
+
         if fullscreen:
             self.showFullScreen()
+
         self._render()
+        self._render_debug()
 
     def _render(self) -> None:
-        pix = load_pixmap(str(self._image_path))
+        oriented = _select_oriented_splash(self._image_path, self._label.size())
+
+        pix = load_pixmap(str(oriented))
         if pix is None:
             self._label.clear()
             return
@@ -52,9 +116,65 @@ class RecoveryWindow(QMainWindow):
         except Exception:
             self._label.clear()
 
+    def _render_debug(self) -> None:
+        try:
+            wlan_ip = _get_wlan_ip()
+            if not wlan_ip:
+                description = f"""
+Not connected to a network!
+Sayori boot panic!! Device is now in recovery!
+Please file a bug in Radar on your developer workstation!
+
+If you need to connect to the device:
+* For phone, tablet: connect to the workstation over RNDIS.
+* All other devices have some sort of LAN or USB port"""
+            else:
+                description = f"""
+IP: {wlan_ip}
+Sayori boot panic!! Device is now in recovery!
+Please file a bug in Radar on your developer workstation!
+
+If you need to connect to the device:
+* For phone, tablet: connect to the workstation over RNDIS.
+* All other devices have some sort of LAN or USB port."""
+            host = platform.node()
+            now = datetime.datetime.now().isoformat()
+
+            bug = self._debug_info or {}
+
+            debug_txt = f"""
+{description}
+
+Error {bug.get("code")} (num: {bug.get("numeric")})
+In subsystem \"{bug.get("subsystem")}\""
+Severity: {bug.get("severity")}
+
+Detail:
+{bug.get("detail") if bug.get("detail") else "No detail was provided by panic"}
+
+Context:
+{json.dumps(bug.get("context", {}), indent=2) if json.dumps(bug.get("context", {}), indent=2) else "No context was provided by panic"}
+
+Traceback:
+{bug.get("traceback","<none>")}
+"""
+
+            self._debug_label.setText(debug_txt.strip())
+            self._debug_label.adjustSize()
+            self._debug_label.move(0,0)
+
+        except Exception:
+            pass
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+
+        # keep background label matched to window
+        self._label.setGeometry(self.rect())
+
         self._render()
+        self._debug_label.move(0, 0)
+        self._debug_label.adjustSize()
 
 def _config_file_is_valid_json_dict(path: Path) -> tuple[bool, str]:
     if not path.exists():
@@ -115,6 +235,7 @@ def _run_boot_init_checks(
     # -------------------------
     # CONFIG VALIDATION
     # -------------------------
+    raise Exception
     for cfg in config_files:
         ok, detail = _config_file_is_valid_json_dict(cfg)
         if not ok:
@@ -179,7 +300,8 @@ def _run_boot_init_checks(
     )
 
 def _render_splash(label: QLabel, *, image_path: Path) -> bool:
-    pix = load_pixmap(str(image_path))
+    oriented = _select_oriented_splash(image_path, label.size())
+    pix = load_pixmap(str(oriented))
     if pix is None:
         label.clear()
         return False
@@ -189,6 +311,7 @@ def _render_splash(label: QLabel, *, image_path: Path) -> bool:
     except Exception:
         label.clear()
         return False
+
 
 
 import argparse
@@ -357,7 +480,7 @@ def main():
         throbber_label.clear()
 
     class BootCheckWorker(QObject):
-        finished = Signal(bool, str)
+        finished = Signal(bool, str, dict)
 
         def __init__(self, base_dir, os_instance, args):
             super().__init__()
@@ -366,6 +489,7 @@ def main():
             self.args = args
 
         def run(self):
+            details = {}
             try:
                 ok, reason, details = _run_boot_init_checks(
                     base_dir=self.base_dir,
@@ -377,14 +501,25 @@ def main():
                     log_dir = Path("./logs")
                     log_dir.mkdir(parents=True, exist_ok=True)
 
-                    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+                    ts = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
                     panic_file = log_dir / f"panic_{ts}.json"
 
                     with panic_file.open("w", encoding="utf-8") as f:
                         json.dump(details, f, indent=2)
-            except Exception as e:
-                ok, reason = False, f"exception during boot checks: {e}"
-            self.finished.emit(ok, reason)
+
+            except Exception:
+                ok = False
+                reason = "exception during boot checks"
+                details = {
+                    "code": "BOOT_EXCEPTION",
+                    "numeric": 0xDEAD,
+                    "severity": "fatal",
+                    "subsystem": "boot",
+                    "detail": str(sys.exc_info()[1]),
+                    "traceback": traceback.format_exc()
+                }
+
+            self.finished.emit(ok, reason, details)
 
     class BootCheckResultHandler(QObject):
         def __init__(self, *, movie: QMovie, label: QLabel, splash_label: QLabel, preload_view, os_instance: Deletescape, splash_dir: Path, args, log, app: QApplication):
@@ -410,8 +545,8 @@ def main():
             finally:
                 self._preload_view = None
 
-        @Slot(bool, str)
-        def handle(self, ok: bool, reason: str) -> None:
+        @Slot(bool, str, dict)
+        def handle(self, ok: bool, reason: str, details: dict) -> None:
             if self._movie.isValid():
                 self._movie.stop()
                 self._throbber_label.setVisible(False)
@@ -428,7 +563,11 @@ def main():
                     self._os_instance.deleteLater()
                 except Exception:
                     pass
-                self._recovery_window = RecoveryWindow(image_path=recovery_img, fullscreen=self._args.fullscreen)
+                self._recovery_window = RecoveryWindow(
+                    image_path=recovery_img,
+                    debug_info=details,
+                    fullscreen=self._args.fullscreen
+                )
                 self._recovery_window.show()
                 self._app.setQuitOnLastWindowClosed(True)
                 self._app.processEvents()

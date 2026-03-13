@@ -79,7 +79,6 @@ def _device_trees_root() -> Path:
     debug(f"Device trees root resolved to {root}")
     return root
 
-
 def _pretty_path(path: Path, root: Path) -> Path:
     try:
         rel = path.resolve().relative_to(root.resolve())
@@ -340,11 +339,17 @@ def _zip_directory(d: Path, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        for f in sorted(d.rglob("*")):
-            if f.is_file():
-                rel = f.relative_to(d)
+        for p in sorted(d.rglob("*")):
+            rel = p.relative_to(d)
+
+            if p.is_dir():
+                # Explicitly add empty directories
+                if not any(p.iterdir()):
+                    debug(f"Adding empty dir to zip: {rel}/")
+                    z.writestr(str(rel) + "/", "")
+            else:
                 debug(f"Adding to zip: {rel}")
-                z.write(f, rel)
+                z.write(p, rel)
 
     debug("Zip archive created successfully")
 

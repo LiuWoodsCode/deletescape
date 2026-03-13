@@ -1114,17 +1114,48 @@ class Deletescape(QMainWindow):
         log.debug("Apply theme", extra={"dark_mode": bool(getattr(self.config, "dark_mode", False))})
 
         # Minimal dark palette for readability.
-        app.setStyle('FluentWinUi3')
-        from PySide6.QtGui import QGuiApplication
+        import os
+        from PySide6.QtGui import QGuiApplication, QPalette, QColor
         from PySide6.QtCore import Qt
 
         app = QGuiApplication.instance()
 
-        if self.config.dark_mode:
-            app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+        # Style selection
+        if os.name == "nt":
+            app.setStyle("windows11")
         else:
-            app.styleHints().setColorScheme(Qt.ColorScheme.Light)
-                
+            app.setStyle("fusion")
+
+        # Color scheme
+        if not os.name == "nt":
+            if self.config.dark_mode:
+                app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+
+                # Custom dark palette
+                palette = QPalette()
+                palette.setColor(QPalette.Window, QColor(53, 53, 53))
+                palette.setColor(QPalette.WindowText, Qt.white)
+                palette.setColor(QPalette.Base, QColor(35, 35, 35))
+                palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+                palette.setColor(QPalette.ToolTipBase, Qt.white)
+                palette.setColor(QPalette.ToolTipText, Qt.white)
+                palette.setColor(QPalette.Text, Qt.white)
+                palette.setColor(QPalette.Button, QColor(53, 53, 53))
+                palette.setColor(QPalette.ButtonText, Qt.white)
+                palette.setColor(QPalette.BrightText, Qt.red)
+                palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+                palette.setColor(QPalette.HighlightedText, Qt.black)
+
+                app.setPalette(palette)
+
+            else:
+                app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+        else:
+            if self.config.dark_mode:
+                app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+            else:
+                app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+             
     # Helper to return apps that are not marked hidden
     def get_visible_apps(self):
         return [app for app in self.apps.values() if not app.hidden]

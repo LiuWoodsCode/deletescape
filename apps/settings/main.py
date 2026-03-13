@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from datetime import datetime
 import sys
-import ctypes
-import winreg
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
@@ -50,37 +48,6 @@ from wifi import (
 # --------- theme helpers ---------
 
 def get_windows_accent_color(default: QColor = QColor("#0078D7")) -> QColor:
-    """
-    Attempts to read the Windows accent color. Falls back to default on failure or non-Windows.
-    Uses DwmGetColorizationColor or registry value as fallback.
-    """
-    if sys.platform.startswith("win"):
-        try:
-            dwm = ctypes.WinDLL("dwmapi")
-            color = ctypes.c_uint()
-            opaque = ctypes.c_bool()
-            res = dwm.DwmGetColorizationColor(ctypes.byref(color), ctypes.byref(opaque))
-            if res == 0:
-                argb = color.value
-                a = (argb >> 24) & 0xFF
-                r = (argb >> 16) & 0xFF
-                g = (argb >> 8) & 0xFF
-                b = argb & 0xFF
-                return QColor(r, g, b, a)
-        except Exception:
-            pass
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\\Microsoft\\Windows\\DWM")
-            val, _ = winreg.QueryValueEx(key, "ColorizationColor")
-            winreg.CloseKey(key)
-            argb = int(val)
-            a = (argb >> 24) & 0xFF
-            r = (argb >> 16) & 0xFF
-            g = (argb >> 8) & 0xFF
-            b = argb & 0xFF
-            return QColor(r, g, b, a)
-        except Exception:
-            pass
     return default
 
 ACCENT = QColor("#FF00AA")  # user's Windows accent color or fallback

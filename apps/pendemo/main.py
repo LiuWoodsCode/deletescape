@@ -68,7 +68,7 @@ class DrawingCanvas(QWidget):
         self._ensure_image(event.size())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if self._tablet_active:
+        if not self._is_real_mouse(event) or self._tablet_active:
             event.ignore()
             return
         if event.button() != Qt.LeftButton:
@@ -78,7 +78,7 @@ class DrawingCanvas(QWidget):
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if self._tablet_active:
+        if not self._is_real_mouse(event) or self._tablet_active:
             event.ignore()
             return
         if not self._drawing or not (event.buttons() & Qt.LeftButton):
@@ -88,7 +88,7 @@ class DrawingCanvas(QWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if self._tablet_active:
+        if not self._is_real_mouse(event) or self._tablet_active:
             event.ignore()
             return
         if event.button() != Qt.LeftButton:
@@ -126,21 +126,46 @@ class DrawingCanvas(QWidget):
         event.ignore()
 
     def event(self, event) -> bool:
-        if event.type() == QEvent.Type.TouchBegin:
+        etype = event.type()
+
+        if etype in (
+            QEvent.Type.TouchBegin,
+            QEvent.Type.TouchUpdate,
+            QEvent.Type.TouchEnd,
+            QEvent.Type.TouchCancel,
+        ):
             points = event.points()
-            if points:
-                self._start_stroke(points[0].position(), 1.0, "Touch")
+
+            if not points:
+                event.ignore()
+                return False
+
+            p = points[0]
+            pos = p.position()
+
+            if etype == QEvent.Type.TouchBegin:
+                self._tablet_active = False      # prevent mouse fallback
+                self._start_stroke(pos, 1.0, "Touch")
+                event.accept()
                 return True
-        elif event.type() == QEvent.Type.TouchUpdate:
-            points = event.points()
-            if points and self._drawing:
-                self._continue_stroke(points[0].position(), 1.0, "Touch")
+
+            elif etype == QEvent.Type.TouchUpdate:
+                if self._drawing:
+                    self._continue_stroke(pos, 1.0, "Touch")
+                event.accept()
                 return True
-        elif event.type() == QEvent.Type.TouchEnd:
-            if self._drawing:
-                self._finish_stroke()
+
+            elif etype in (QEvent.Type.TouchEnd, QEvent.Type.TouchCancel):
+                if self._drawing:
+                    self._finish_stroke()
+                event.accept()
                 return True
+
         return super().event(event)
+
+    def _is_real_mouse(self, event: QMouseEvent) -> bool:
+        # ignore mouse events generated from touch
+        return event.source() == Qt.MouseEventSource.MouseEventNotSynthesized
 
     def export_to(self, path: Path) -> bool:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -343,7 +368,7 @@ class App(QWidget):
 
     def _save_canvas(self) -> None:
         base_dir = Path(__file__).resolve().parents[2]
-        out_dir = base_dir / "userdata" / "Data" / "pendemo"
+        out_dir = base_dir / "userdata" / "User" / "DCIM"
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         out_path = out_dir / f"drawing-{timestamp}.png"
         ok = self._canvas.export_to(out_path)
@@ -353,7 +378,7 @@ class App(QWidget):
             notify = getattr(self.window, "notify", None)
             if callable(notify):
                 try:
-                    notify(title="Pen Demo", message=f"Saved {out_path.name}", duration_ms=2500, app_id="pendemo")
+                    notify(title="Drawing saved", message=f"Saved {out_path.name}", duration_ms=2500, app_id="pendemo")
                 except Exception:
                     pass
         else:

@@ -3,7 +3,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict
-
+import subprocess
+import platform
 
 CONFIG_FILE_NAME = "config.json"
 DEVICE_CONFIG_FILE_NAME = "deviceconfig.json"
@@ -60,6 +61,91 @@ class ConfigStore:
             encoding="utf-8",
         )
 
+def _run(cmd: list[str]) -> str:
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return ""
+
+
+def _get_windows_hw() -> dict:
+    try:
+        import wmi
+
+        c = wmi.WMI()
+
+        cs = c.Win32_ComputerSystem()[0]
+        bios = c.Win32_BIOS()[0]
+
+        manufacturer = (cs.Manufacturer or "").strip()
+        model = (cs.Model or "").strip()
+        serial = (bios.SerialNumber or "").strip()
+
+        return {
+            "manufacturer": manufacturer,
+            "model": model,
+            "serial": serial,
+        }
+
+    except Exception:
+        return {
+            "manufacturer": "",
+            "model": "",
+            "serial": "",
+        }
+
+
+def _read_file(path: str) -> str:
+    try:
+        return Path(path).read_text().strip()
+    except Exception:
+        return ""
+
+
+def _get_linux_hw() -> dict:
+    return {
+        "manufacturer": _read_file("/sys/class/dmi/id/sys_vendor"),
+        "model": _read_file("/sys/class/dmi/id/product_name"),
+        "serial": _read_file("/sys/class/dmi/id/product_serial"),
+    }
+
+
+def _get_macos_hw() -> dict:
+    serial = _run(["ioreg", "-l"])
+    model = _run(["sysctl", "-n", "hw.model"])
+
+    sn = ""
+    for line in serial.splitlines():
+        if "IOPlatformSerialNumber" in line:
+            sn = line.split("=")[-1].replace('"', '').strip()
+
+    return {
+        "manufacturer": "Apple",
+        "model": model,
+        "serial": sn,
+    }
+
+
+def _get_host_device_defaults() -> dict:
+    system = platform.system()
+
+    if system == "Windows":
+        hw = _get_windows_hw()
+    elif system == "Linux":
+        hw = _get_linux_hw()
+    elif system == "Darwin":
+        hw = _get_macos_hw()
+    else:
+        hw = {}
+
+    model = hw.get("model", "") or ""
+
+    return {
+        "manufacturer": hw.get("manufacturer", "") or "",
+        "model": model,
+        "model_name": model,
+        "serial_number": hw.get("serial", "") or "",
+    }
 
 @dataclass
 class DeviceConfig:
@@ -71,7 +157,7 @@ class DeviceConfig:
     imei: str = ""
     wifi_mac: str = ""
     bluetooth_mac: str = ""
-    has_hw_home: bool = True
+    has_hw_home: bool = False
     drivers: Dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -80,8 +166,8 @@ class DeviceConfig:
             value = data.get(key, "")
             return value if isinstance(value, str) else str(value)
 
-        default_battery_driver = "winnt" if os.name == "nt" else "none"
-        default_wifi_driver = "netsh" if os.name == "nt" else "none"
+        default_battery_driver = "winnt" if os.name == "nt" else "psinfo"
+        default_wifi_driver = "netsh" if os.name == "nt" else "nmcli"
         default_drivers: Dict[str, str] = {
             "battery": default_battery_driver,
             "modem": "none",
@@ -110,11 +196,18 @@ class DeviceConfig:
             if val:
                 parsed_drivers[comp] = val
 
+        host_defaults = _get_host_device_defaults()
+
+        manufacturer = _get_str("manufacturer") or host_defaults["manufacturer"]
+        model = _get_str("model") or f"generic_{platform.machine()}"
+        model_name = _get_str("model_name") or model or host_defaults["model_name"]
+        serial_number = _get_str("serial_number") or host_defaults["serial_number"]
+
         return cls(
-            manufacturer=_get_str("manufacturer"),
-            model=_get_str("model"),
-            model_name=_get_str("model_name"),
-            serial_number=_get_str("serial_number"),
+            manufacturer=manufacturer,
+            model=model,
+            model_name=model_name,
+            serial_number=serial_number,
             hardware_revision=_get_str("hardware_revision"),
             imei=_get_str("imei"),
             wifi_mac=_get_str("wifi_mac"),

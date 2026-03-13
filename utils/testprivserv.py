@@ -1,8 +1,19 @@
 from multiprocessing.connection import Client
 
-conn = Client(("localhost", 6000), authkey=b"secret")
 
-conn.send({"cmd": "ping"})
-print(conn.recv())
+def call(address, endpoint, **data):
 
-conn.close()
+    conn = Client(address, authkey=b"secret")
+
+    conn.send({
+        "endpoint": endpoint,
+        "data": data
+    })
+
+    r = conn.recv()
+    conn.close()
+
+    return r
+
+
+print(call(("localhost", 9150), "kernel.uname"))

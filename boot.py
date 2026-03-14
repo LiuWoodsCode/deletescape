@@ -92,7 +92,7 @@ class RecoveryWindow(QMainWindow):
                 background-color: rgba(0,0,0,100);
                 color: #FFFFFF;
                 font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
-                font-size: 9px;
+                font-size: 11px;
             }
         """)
 
@@ -130,13 +130,14 @@ If you need to connect to the device:
 * All other devices have some sort of LAN or USB port"""
             else:
                 description = f"""
-IP: {wlan_ip}
 Sayori boot panic!! Device is now in recovery!
 Please file a bug in Radar on your developer workstation!
 
 If you need to connect to the device:
 * For phone, tablet: connect to the workstation over RNDIS.
-* All other devices have some sort of LAN or USB port."""
+* All other devices have some sort of LAN or USB port.'
+
+Your IP address is {wlan_ip}"""
             host = platform.node()
             now = datetime.datetime.now().isoformat()
 
@@ -144,21 +145,21 @@ If you need to connect to the device:
 
             debug_txt = f"""
 {description}
+Panic was saved to {bug.get("panic_file")}
 
 Error {bug.get("code")} (num: {bug.get("numeric")})
-In subsystem \"{bug.get("subsystem")}\""
+In subsystem \"{bug.get("subsystem")}\"
 Severity: {bug.get("severity")}
 
 Detail:
 {bug.get("detail") if bug.get("detail") else "No detail was provided by panic"}
 
 Context:
-{json.dumps(bug.get("context", {}), indent=2) if json.dumps(bug.get("context", {}), indent=2) else "No context was provided by panic"}
+{json.dumps(bug.get("context", {}), indent=2) if not json.dumps(bug.get("context", {}), indent=2) == "{}" else "No context was provided by panic"}
 
-Traceback:
-{bug.get("traceback","<none>")}
+{bug.get("traceback","")}
 """
-
+            print(debug_txt)
             self._debug_label.setText(debug_txt.strip())
             self._debug_label.adjustSize()
             self._debug_label.move(0,0)
@@ -235,7 +236,6 @@ def _run_boot_init_checks(
     # -------------------------
     # CONFIG VALIDATION
     # -------------------------
-    raise Exception
     for cfg in config_files:
         ok, detail = _config_file_is_valid_json_dict(cfg)
         if not ok:
@@ -503,6 +503,8 @@ def main():
 
                     ts = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
                     panic_file = log_dir / f"panic_{ts}.json"
+
+                    details["panic_file"] = str(panic_file.resolve())
 
                     with panic_file.open("w", encoding="utf-8") as f:
                         json.dump(details, f, indent=2)

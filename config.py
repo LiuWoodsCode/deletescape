@@ -200,7 +200,7 @@ class DeviceConfig:
 
         manufacturer = _get_str("manufacturer") or host_defaults["manufacturer"]
         model = _get_str("model") or f"generic_{platform.machine()}"
-        model_name = _get_str("model_name") or model or host_defaults["model_name"]
+        model_name = _get_str("model_name") or host_defaults["model_name"] or model
         serial_number = _get_str("serial_number") or host_defaults["serial_number"]
 
         return cls(

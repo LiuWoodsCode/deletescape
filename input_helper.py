@@ -1,4 +1,4 @@
-from PySide6.QtCore import QObject, QEvent
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QLineEdit, QTextEdit, QMainWindow, QWidget
 
 from virtual_keyboard import VirtualKeyboard
@@ -12,6 +12,7 @@ log = get_logger("inputhelper")
 class _KeyboardFocusFilter(QObject):
     def __init__(self, app, *, host_widget=None, manager=None):
         super().__init__(app)
+        self._app = app
         # If a manager is provided, use its virtual keyboard instance so
         # programmatic control and flags are shared.
         if manager is not None and hasattr(manager, "vk"):
@@ -19,6 +20,10 @@ class _KeyboardFocusFilter(QObject):
         else:
             self._vk = VirtualKeyboard()
         self._host_widget = host_widget
+        try:
+            self._app.focusChanged.connect(self._on_focus_changed)
+        except Exception:
+            log.exception("Failed to connect focusChanged for virtual keyboard")
 
     def _resolve_host(self, target: QWidget) -> QWidget:
         if self._host_widget is not None:
@@ -30,46 +35,41 @@ class _KeyboardFocusFilter(QObject):
                 return cw
         return win
 
-    def eventFilter(self, obj, event):
+    def _show_for_target(self, target: QWidget) -> None:
+        persistent_prop = target.property(VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY)
+        persistent = bool(persistent_prop) if persistent_prop is not None else False
+        close_on_enter_prop = target.property(VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY)
+        close_on_enter = True if close_on_enter_prop is None else bool(close_on_enter_prop)
+        self._vk.show_for_widget(
+            target,
+            host=self._resolve_host(target),
+            persistent=persistent,
+            close_on_enter=close_on_enter,
+        )
+
+    def _hide_keyboard(self) -> None:
         try:
-            et = event.type()
-        except Exception:
-            return super().eventFilter(obj, event)
-
-        if et == QEvent.FocusIn:
-            target = obj
-            # Only show our keyboard for common text widgets.
-            if isinstance(target, (QLineEdit, QTextEdit)):
-                persistent_prop = target.property(VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY)
-                persistent = bool(persistent_prop) if persistent_prop is not None else False
-                close_on_enter_prop = target.property(VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY)
-                close_on_enter = True if close_on_enter_prop is None else bool(close_on_enter_prop)
-                self._vk.show_for_widget(
-                    target,
-                    host=self._resolve_host(target),
-                    persistent=persistent,
-                    close_on_enter=close_on_enter,
-                )
-        elif et == QEvent.FocusOut:
-            target = obj
-            if isinstance(target, (QLineEdit, QTextEdit)):
-                # Respect the keyboard's configured behavior: if the
-                # keyboard was requested to remain open (persistent), do
-                # not hide on focus loss.
+            if getattr(self._vk, "_close_on_focus_loss", True):
                 try:
-                    if getattr(self._vk, "_close_on_focus_loss", True):
-                        try:
-                            # Prefer using the keyboard's close helper.
-                            self._vk.close_keyboard()
-                        except Exception:
-                            self._vk.hide()
+                    self._vk.close_keyboard()
                 except Exception:
-                    try:
-                        self._vk.hide()
-                    except Exception:
-                        pass
+                    self._vk.hide()
+        except Exception:
+            try:
+                self._vk.hide()
+            except Exception:
+                pass
 
-        return super().eventFilter(obj, event)
+    def _on_focus_changed(self, old, now) -> None:
+        try:
+            if isinstance(now, (QLineEdit, QTextEdit)):
+                self._show_for_target(now)
+                return
+
+            if isinstance(old, (QLineEdit, QTextEdit)):
+                self._hide_keyboard()
+        except Exception:
+            log.exception("Virtual keyboard focusChanged handler failed")
 
 
 def install_focus_filter(app, *, host_widget=None):
@@ -78,5 +78,15 @@ def install_focus_filter(app, *, host_widget=None):
     used for positioning/parenting the keyboard (e.g. Deletescape.root).
     """
     f = _KeyboardFocusFilter(app, host_widget=host_widget)
-    app.installEventFilter(f)
+    # Keep a strong Python reference on the application object. The current
+    # implementation uses QApplication.focusChanged instead of a Python event
+    # filter, but the lifetime requirement remains the same.
+    try:
+        retained = getattr(app, "_deletescape_event_filters", None)
+        if retained is None:
+            retained = []
+            setattr(app, "_deletescape_event_filters", retained)
+        retained.append(f)
+    except Exception:
+        pass
     return f

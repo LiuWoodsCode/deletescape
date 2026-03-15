@@ -911,6 +911,8 @@ class Deletescape(QMainWindow):
         self._has_unlocked_once = False
 
         self._running_apps: dict[str, RunningApp] = {}
+        self._terminating_apps: dict[str, RunningApp] = {}
+        self._boot_webengine_preload_view: QWidget | None = None
 
         # Root UI stays constant: status bar + app content host.
         self.root = QWidget(self)
@@ -1366,10 +1368,16 @@ class Deletescape(QMainWindow):
 
     def _terminate_app(self, app_id: str) -> None:
         log.info("Terminate app", extra={"app_id": str(app_id)})
+        if app_id in self._terminating_apps:
+            log.debug("Terminate app: already terminating", extra={"app_id": str(app_id)})
+            return
+
         running = self._running_apps.pop(app_id, None)
         if running is None:
             log.debug("Terminate app: not running", extra={"app_id": str(app_id)})
             return
+
+        self._terminating_apps[app_id] = running
 
         try:
             hook = getattr(running.instance, 'on_quit', None)
@@ -1386,15 +1394,16 @@ class Deletescape(QMainWindow):
             pass
 
         try:
-            idx = self._content_stack.indexOf(running.widget)
-            if idx >= 0:
-                self._content_stack.removeWidget(running.widget)
+            running.widget.hide()
+            running.widget.setEnabled(False)
+            running.widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         except Exception:
             pass
 
         try:
-            running.widget.setParent(None)
-            running.widget.deleteLater()
+            idx = self._content_stack.indexOf(running.widget)
+            if idx >= 0:
+                self._content_stack.removeWidget(running.widget)
         except Exception:
             pass
 
@@ -1403,8 +1412,38 @@ class Deletescape(QMainWindow):
             self.active_app_id = None
             log.debug("Active app cleared", extra={"app_id": str(app_id)})
 
-        # Best-effort: unload the app's imported code so its memory can be reclaimed.
-        # This matters because holding onto the App class keeps the module alive.
+        try:
+            if not bool(running.widget.property("_deletescapeTerminateHookInstalled")):
+                running.widget.setProperty("_deletescapeTerminateHookInstalled", True)
+                running.widget.destroyed.connect(
+                    lambda *_args, app_id=app_id: QTimer.singleShot(
+                        0, lambda app_id=app_id: self._finalize_terminated_app(app_id)
+                    )
+                )
+        except Exception:
+            log.exception("Failed to install teardown hook", extra={"app_id": str(app_id)})
+
+        QTimer.singleShot(0, lambda app_id=app_id: self._dispose_terminating_widget(app_id))
+
+    def _dispose_terminating_widget(self, app_id: str) -> None:
+        running = self._terminating_apps.get(app_id)
+        if running is None:
+            return
+
+        try:
+            running.widget.setParent(None)
+            running.widget.deleteLater()
+        except Exception:
+            log.exception("Failed to dispose terminating app widget", extra={"app_id": str(app_id)})
+            self._finalize_terminated_app(app_id)
+
+    def _finalize_terminated_app(self, app_id: str) -> None:
+        running = self._terminating_apps.pop(app_id, None)
+        if running is None:
+            return
+
+        # Unload the app only after Qt has torn down the widget tree so PySide
+        # does not have to resolve wrappers from a module we just dropped.
         try:
             desc = self.apps.get(app_id)
             if desc is not None:
@@ -2068,6 +2107,7 @@ class Deletescape(QMainWindow):
         log.info("Launch app", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
 
         prev_id = self.active_app_id
+        prev_to_terminate: str | None = None
         if prev_id and prev_id != name:
             # Allow apps to react to backgrounding.
             self._call_app_hook(prev_id, 'on_pause')
@@ -2079,7 +2119,7 @@ class Deletescape(QMainWindow):
                     "Previous app not background-enabled; terminating",
                     extra={"prev_app_id": str(prev_id)},
                 )
-                self._terminate_app(prev_id)
+                prev_to_terminate = prev_id
 
         running = self._get_or_start_app(name)
         if running is None:
@@ -2092,6 +2132,9 @@ class Deletescape(QMainWindow):
             self._content_stack.setCurrentWidget(running.widget)
         except Exception:
             pass
+
+        if prev_to_terminate:
+            QTimer.singleShot(0, lambda app_id=prev_to_terminate: self._terminate_app(app_id))
 
         # Foreground hook.
         self._call_app_hook(name, 'on_resume')

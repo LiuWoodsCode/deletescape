@@ -546,9 +546,12 @@ def main():
                 return
             try:
                 self._preload_view.hide()
-                self._preload_view.deleteLater()
+                self._preload_view.setEnabled(False)
+                self._preload_view.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                self._os_instance._boot_webengine_preload_view = self._preload_view
+                self._log.info("QtWebEngine preload view retained for process lifetime")
             except Exception:
-                self._log.exception("Failed to dispose QtWebEngine preload view")
+                self._log.exception("Failed to retain QtWebEngine preload view")
             finally:
                 self._preload_view = None
 

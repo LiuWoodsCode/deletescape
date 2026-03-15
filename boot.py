@@ -147,7 +147,6 @@ Not connected to a network!
             else:
                 description = f"""
 {header}
-
 Your IP address is {wlan_ip}
 """
             host = platform.node()

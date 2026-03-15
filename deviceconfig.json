@@ -1,3 +1,17 @@
 {
-  "has_hw_home": false
+  "manufacturer": "Grizzco Industries",
+  "model": "SIMDEV",
+  "model_name": "Simulated Device",
+  "has_hw_home": false,
+  "drivers": {
+    "battery": "winnt",
+    "modem": "simulated",
+    "location": "simulated",
+    "wifi": "netsh",
+    "display": "simulated",
+    "audio": "simulated",
+    "sensors": "simulated",
+    "vibration": "simulated",
+    "thermals": "simulated"
+  }
 }

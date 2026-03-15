@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from typing import Any
 import traceback
 from config import DeviceConfigStore
@@ -24,6 +25,8 @@ def _default_driver(component: str) -> str:
         return "simulated"
     if comp == "sensors":
         return "simulated"
+    if comp == "thermals":
+        return "vcgencmd" if platform.system() == "Linux" else "none"
     if comp == "vibration":
         return "simulated"
     return "none"

@@ -57,10 +57,15 @@ from wallpaper import load_pixmap, scale_crop_center
 
 from background_tasks import BackgroundTaskManager
 from notifications import NotificationCenter
+from thermals import get_thermal_info
 
 
 STATUS_BAR_HEIGHT_PX = 24
 NOTIFICATION_BANNER_HEIGHT_PX = 73
+STATUS_BAR_UPDATE_INTERVAL_MS = 3000
+THERMAL_COOLDOWN_CHECK_INTERVAL_MS = 60000
+THERMAL_COOLDOWN_THRESHOLD_C = 85.0
+THERMAL_RECOVERY_CHECKS = 2
 
 from logger import PROCESS_START, get_logger
 log = get_logger("home")
@@ -202,7 +207,7 @@ class StatusBarWidget(QWidget):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update)
-        self._timer.start(3000)
+        self._timer.start(STATUS_BAR_UPDATE_INTERVAL_MS)
 
         self._wifi_poll_thread = _WifiPollThread(interval_ms=3000, parent=self)
         self._wifi_poll_thread.wifi_info_ready.connect(self._on_wifi_info)
@@ -294,6 +299,17 @@ class StatusBarWidget(QWidget):
             self.cellular_widget.set_level(int(getattr(strength, "bars", 0) or 0))
         except Exception:
             self.cellular_widget.set_level(0)
+
+        try:
+            self.window.on_status_bar_update()
+        except Exception:
+            pass
+
+    def set_update_interval_ms(self, interval_ms: int) -> None:
+        interval_ms = max(250, int(interval_ms))
+        if self._timer.interval() == interval_ms:
+            return
+        self._timer.setInterval(interval_ms)
 
     def _on_wifi_info(self, wifi: WifiInfo | dict) -> None:
         try:
@@ -741,6 +757,7 @@ class LockScreenOverlay(QWidget):
         self.setVisible(False)
 
         self._wallpaper_pix = None
+        self._cooling_down = False
         self._bg = QLabel(self)
         self._bg.setScaledContents(False)
         self._bg.setAlignment(Qt.AlignCenter)
@@ -771,12 +788,20 @@ class LockScreenOverlay(QWidget):
         self._apply_text_shadow(self.date_label, blur=14, y_offset=2)
         layout.addWidget(self.date_label)
 
-        layout.addWidget(QLabel(""))
+        self.cooldown_label = QLabel("Your device needs to cool down before you can use it.")
+        self.cooldown_label.setAlignment(Qt.AlignCenter)
+        cooldown_font = QFont()
+        cooldown_font.setPointSize(16)
+        self.cooldown_label.setStyleSheet("background: transparent;")
+        self.cooldown_label.setFont(cooldown_font)
+        self.cooldown_label.setWordWrap(True)
+        self.cooldown_label.setVisible(False)
+        layout.addWidget(self.cooldown_label)
 
-        hint = QLabel('Press Home to unlock')
-        hint.setAlignment(Qt.AlignCenter)
-        self._apply_text_shadow(hint, blur=12, y_offset=2)
-        layout.addWidget(hint)
+        self.hint_label = QLabel('Press Home to unlock')
+        self.hint_label.setAlignment(Qt.AlignCenter)
+        self._apply_text_shadow(self.hint_label, blur=12, y_offset=2)
+        layout.addWidget(self.hint_label)
 
         layout.addStretch(1)
 
@@ -784,6 +809,7 @@ class LockScreenOverlay(QWidget):
         self._timer.timeout.connect(self._update_time_date)
         self._timer.start(1000)
         self._update_time_date()
+        self._apply_cooling_down_state()
 
     def _apply_text_shadow(self, label: QLabel, *, blur: int, y_offset: int) -> None:
         try:
@@ -797,6 +823,11 @@ class LockScreenOverlay(QWidget):
 
     def _update_time_date(self) -> None:
         now = datetime.now()
+        if self._cooling_down:
+            self.time_label.clear()
+            self.date_label.clear()
+            return
+
         try:
             self.time_label.setText(self.window.format_time(now))
         except Exception:
@@ -811,12 +842,32 @@ class LockScreenOverlay(QWidget):
         self._wallpaper_pix = load_pixmap(path)
         self._render_wallpaper()
 
+    def set_cooling_down(self, cooling_down: bool) -> None:
+        cooling_down = bool(cooling_down)
+        if self._cooling_down == cooling_down:
+            return
+        self._cooling_down = cooling_down
+        self._apply_cooling_down_state()
+
+    def _apply_cooling_down_state(self) -> None:
+        self.time_label.setVisible(not self._cooling_down)
+        self.date_label.setVisible(not self._cooling_down)
+        self.hint_label.setVisible(not self._cooling_down)
+        self.cooldown_label.setVisible(self._cooling_down)
+        self._bg.setVisible(not self._cooling_down)
+        self.setStyleSheet("background-color: black;" if self._cooling_down else "")
+        self._render_wallpaper()
+        self._update_time_date()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._bg.setGeometry(self.rect())
         self._render_wallpaper()
 
     def _render_wallpaper(self) -> None:
+        if self._cooling_down:
+            self._bg.clear()
+            return
         if self._wallpaper_pix is None:
             self._bg.clear()
             return
@@ -909,6 +960,9 @@ class Deletescape(QMainWindow):
         self._handling_crash = False
         self._locked = True
         self._has_unlocked_once = False
+        self._thermal_cooldown_active = False
+        self._thermal_cooldown_below_threshold_checks = 0
+        self._last_cpu_temp_c: float | None = None
 
         self._running_apps: dict[str, RunningApp] = {}
         self._terminating_apps: dict[str, RunningApp] = {}
@@ -1044,6 +1098,82 @@ class Deletescape(QMainWindow):
             log.info("Startup timing", extra={"to_lock_screen_ms": dt_ms})
         except Exception:
             log.exception("Failed to log startup timing")
+
+    def background_tasks_allowed(self) -> bool:
+        return bool(self._has_unlocked_once) and not bool(self._thermal_cooldown_active)
+
+    def is_thermal_cooldown_active(self) -> bool:
+        return bool(self._thermal_cooldown_active)
+
+    def on_status_bar_update(self) -> None:
+        if not hasattr(self, "lock_screen") or not hasattr(self, "background_tasks"):
+            return
+
+        info = get_thermal_info()
+        temp_c = info.cpu_temp_c
+        self._last_cpu_temp_c = temp_c
+
+        if temp_c is None:
+            if self._thermal_cooldown_active:
+                self.status_bar.set_update_interval_ms(THERMAL_COOLDOWN_CHECK_INTERVAL_MS)
+            return
+
+        if temp_c >= THERMAL_COOLDOWN_THRESHOLD_C:
+            self._thermal_cooldown_below_threshold_checks = 0
+            if not self._thermal_cooldown_active:
+                self._enter_thermal_cooldown(temp_c)
+            else:
+                self.status_bar.set_update_interval_ms(THERMAL_COOLDOWN_CHECK_INTERVAL_MS)
+            return
+
+        if not self._thermal_cooldown_active:
+            self.status_bar.set_update_interval_ms(STATUS_BAR_UPDATE_INTERVAL_MS)
+            return
+
+        self._thermal_cooldown_below_threshold_checks += 1
+        self.status_bar.set_update_interval_ms(THERMAL_COOLDOWN_CHECK_INTERVAL_MS)
+        if self._thermal_cooldown_below_threshold_checks >= THERMAL_RECOVERY_CHECKS:
+            self._exit_thermal_cooldown(temp_c)
+
+    def _enter_thermal_cooldown(self, temp_c: float) -> None:
+        log.warning("Thermal cooldown triggered", extra={"cpu_temp_c": float(temp_c)})
+        self._thermal_cooldown_active = True
+        self._thermal_cooldown_below_threshold_checks = 0
+
+        try:
+            if self._control_center_open:
+                self.close_control_center()
+        except Exception:
+            pass
+
+        try:
+            self.background_tasks.cancel_all()
+        except Exception:
+            log.exception("Failed to cancel background tasks during thermal cooldown")
+
+        try:
+            self.quit_active_app()
+        except Exception:
+            log.exception("Failed to terminate active app during thermal cooldown")
+
+        self._locked = True
+        self._set_app_paused(True)
+        try:
+            self.lock_screen.set_cooling_down(True)
+        except Exception:
+            pass
+        self._show_lock_overlay(True)
+        self.status_bar.set_update_interval_ms(THERMAL_COOLDOWN_CHECK_INTERVAL_MS)
+
+    def _exit_thermal_cooldown(self, temp_c: float) -> None:
+        log.info("Thermal cooldown cleared", extra={"cpu_temp_c": float(temp_c)})
+        self._thermal_cooldown_active = False
+        self._thermal_cooldown_below_threshold_checks = 0
+        try:
+            self.lock_screen.set_cooling_down(False)
+        except Exception:
+            pass
+        self.status_bar.set_update_interval_ms(STATUS_BAR_UPDATE_INTERVAL_MS)
 
     # ---------------------------------------------------------
     # Load apps from built-in /apps and userdata/Applications.
@@ -2025,6 +2155,10 @@ class Deletescape(QMainWindow):
 
     def unlock_device(self) -> None:
         if not self._locked:
+            return
+        if self._thermal_cooldown_active:
+            log.info("Unlock blocked during thermal cooldown")
+            self._show_lock_overlay(True)
             return
         log.info("Unlock device")
         self._locked = False

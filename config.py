@@ -168,6 +168,7 @@ class DeviceConfig:
 
         default_battery_driver = "winnt" if os.name == "nt" else "psinfo"
         default_wifi_driver = "netsh" if os.name == "nt" else "nmcli"
+        default_thermals_driver = "vcgencmd" if platform.system() == "Linux" else "none"
         default_drivers: Dict[str, str] = {
             "battery": default_battery_driver,
             "modem": "none",
@@ -176,6 +177,7 @@ class DeviceConfig:
             "display": "none",
             "audio": "none",
             "sensors": "none",
+            "thermals": default_thermals_driver,
             "vibration": "none",
         }
 
@@ -188,7 +190,7 @@ class DeviceConfig:
                 if k and v:
                     parsed_drivers[k] = v
 
-        for comp in ("battery", "modem", "location", "wifi", "display", "audio", "sensors", "vibration"):
+        for comp in ("battery", "modem", "location", "wifi", "display", "audio", "sensors", "thermals", "vibration"):
             legacy_value = data.get(f"{comp}_driver")
             if legacy_value is None:
                 continue

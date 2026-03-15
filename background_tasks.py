@@ -170,6 +170,21 @@ class BackgroundTaskManager(QObject):
                 )
                 return
 
+            try:
+                allowed = getattr(self._window, "background_tasks_allowed", None)
+                if callable(allowed) and not bool(allowed()):
+                    log.debug(
+                        "Skipping background task (disabled)",
+                        extra={"task_id": task_id, "app_id": str(app_id), "task_name": str(name)},
+                    )
+                    return
+            except Exception:
+                log.exception(
+                    "Failed to evaluate background task availability",
+                    extra={"task_id": task_id, "app_id": str(app_id), "task_name": str(name)},
+                )
+                return
+
             # Execute callback on a worker thread.
             try:
                 with self._lock:

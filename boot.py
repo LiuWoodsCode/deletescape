@@ -119,30 +119,40 @@ class RecoveryWindow(QMainWindow):
     def _render_debug(self) -> None:
         try:
             wlan_ip = _get_wlan_ip()
+            bug = self._debug_info or {}
+            if bug.get("numeric") == 1:
+                header = """
+Device is now in recovery!
+
+Recovery mode was entered manually.
+If you didn't expect this, simply reboot."""
+                
+            else:
+                header = """
+Sayori boot panic!! Device is now in recovery!
+
+An unexpected error has occoured and boot has failed!
+Please file a bug in Radar on your developer workstation!
+"""
             if not wlan_ip:
                 description = f"""
-Not connected to a network!
-Sayori boot panic!! Device is now in recovery!
-Please file a bug in Radar on your developer workstation!
+{header}
 
 If you need to connect to the device:
-* For phone, tablet: connect to the workstation over RNDIS.
-* All other devices have some sort of LAN or USB port"""
+* For phone, tablet: connect to the workstation over RNDIS
+* All other devices have some sort of LAN or USB port
+
+Not connected to a network!
+"""
             else:
                 description = f"""
-Sayori boot panic!! Device is now in recovery!
-Please file a bug in Radar on your developer workstation!
+{header}
 
-If you need to connect to the device:
-* For phone, tablet: connect to the workstation over RNDIS.
-* All other devices have some sort of LAN or USB port.'
-
-Your IP address is {wlan_ip}"""
+Your IP address is {wlan_ip}
+"""
             host = platform.node()
             now = datetime.datetime.now().isoformat()
-
-            bug = self._debug_info or {}
-
+            
             debug_txt = f"""
 {description}
 Panic was saved to {bug.get("panic_file")}
@@ -151,11 +161,7 @@ Error {bug.get("code")} (num: {bug.get("numeric")})
 In subsystem \"{bug.get("subsystem")}\"
 Severity: {bug.get("severity")}
 
-Detail:
 {bug.get("detail") if bug.get("detail") else "No detail was provided by panic"}
-
-Context:
-{json.dumps(bug.get("context", {}), indent=2) if not json.dumps(bug.get("context", {}), indent=2) == "{}" else "No context was provided by panic"}
 
 {bug.get("traceback","")}
 """
@@ -504,7 +510,7 @@ def main():
                     ts = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
                     panic_file = log_dir / f"panic_{ts}.json"
 
-                    details["panic_file"] = str(panic_file.resolve())
+                    details["panic_file"] = str(panic_file)
 
                     with panic_file.open("w", encoding="utf-8") as f:
                         json.dump(details, f, indent=2)

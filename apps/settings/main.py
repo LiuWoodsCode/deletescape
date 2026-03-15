@@ -1491,6 +1491,14 @@ class SettingsWindow(QMainWindow):
 
         c.addWidget(Divider())
 
+        if os_display:
+            subheading1 = QLabel("Device specifications")
+            subheading1.setStyleSheet("font-size: 20px; font-weight: bold;")
+            subheading1.setWordWrap(True)
+            c.addWidget(subheading1)
+
+            c.addSpacing(4)
+            
         self._add_info_rows(c, [
             ("Manufacturer", getattr(dev_cfg, "manufacturer", "")),
             ("Model", f"{getattr(dev_cfg, 'model', '')} ({getattr(dev_cfg, 'model_name', '')})"),

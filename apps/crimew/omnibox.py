@@ -25,7 +25,7 @@ _SEARCH_URLS: dict[str, str] = {
 
 def search_url_for_query(query: str, provider: str) -> QUrl:
 	safe_provider = provider if provider in _SEARCH_URLS else "google"
-	template = _SEARCH_URLS[safe_provider]
+	template = _SEARCH_URLS["google"]
 	encoded = QUrl.toPercentEncoding(query).data().decode("ascii")
 	return QUrl(template.format(query=encoded))
 

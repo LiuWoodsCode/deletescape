@@ -31,6 +31,10 @@ from fs_layout import get_user_data_layout
 
 KANGEL_PORT = 2222
 KANGEL_HOST_KEY_NAME = "kangel_host_key.pem"
+KANGEL_WELCOME_LINES = (
+    "Welcome, P-chan. Keep the stream stable.",
+)
+KANGEL_PROMPT = "KAngel> "
 
 
 def _boolish(value: Any) -> bool:
@@ -146,7 +150,13 @@ def authenticate_system_user(username: str, password: str) -> tuple[bool, str]:
     if password is None:
         return False, "password is required"
 
-    if username == "sayori" and password == "justmonika": ## todo: this is horrible
+    demo_accounts = {
+        ("sayori", "justmonika"),
+        ("ame", "omgkawaiiangel"),
+        ("p-chan", "internetangel"),
+        ("kangel", "needystreameroverload"),
+    }
+    if (str(username or ""), str(password or "")) in demo_accounts:  ## todo: this is horrible
         return True, "ok"
     else:
         return False, "username or password incorrect"
@@ -292,10 +302,9 @@ class KAngelSession:
         return namespace
 
     def _cmd_help(self) -> None:
-        self.writeln("KAngel commands:")
         self.writeln("  help               Show this command list")
-        self.writeln("  info               Show device, build, and shell state")
-        self.writeln("  recovery           Show current recovery panic details")
+        self.writeln("  info               Show device, build state")
+        self.writeln("  recovery           Show current panie details")
         self.writeln("  apps               List discovered apps")
         self.writeln("  launch <app_id>    Launch an app on the UI thread")
         self.writeln("  logs               List recent log files")
@@ -469,7 +478,7 @@ class KAngelSession:
     def _cmd_shell(self, arg_text: str) -> None:
         argv = shlex.split(arg_text) if arg_text.strip() else _default_shell_argv()
         self.writeln(f"entering shell: {' '.join(argv)}")
-        self.writeln("type exit to return to KAngel")
+        self.writeln("type exit to return to KAngel and the Needy Streamer Overload shell")
         try:
             proc = subprocess.Popen(
                 argv,
@@ -571,7 +580,7 @@ class KAngelSession:
         if frame is None:
             self.writeln("pdb unavailable")
             return
-        self.writeln("entering pdb on the KAngel session thread")
+        self.writeln("entering pdb on the KAngel session thread; P-chan is now live-debugging")
         debugger.set_trace(frame)
         self._python_locals.update(namespace)
 
@@ -619,12 +628,11 @@ class KAngelSession:
         return True
 
     def run_interactive(self) -> None:
-        self.writeln("KAngel remote shell")
-        self.writeln(f"authenticated as {self.username}")
-        self.writeln(f"listening on tcp/{self.manager.port}")
+        for line in KANGEL_WELCOME_LINES:
+            self.writeln(line)
         self.writeln("type 'help' for commands")
         while True:
-            line = self._readline("KAngel> ")
+            line = self._readline(KANGEL_PROMPT)
             if line is None:
                 return
             try:

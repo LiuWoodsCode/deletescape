@@ -955,6 +955,7 @@ class Deletescape(QMainWindow):
         )
 
         self.active_app = None
+        self.kiosk = kiosk
         self.active_app_id: str | None = None
         self._control_center_open = False
         self._handling_crash = False
@@ -990,14 +991,15 @@ class Deletescape(QMainWindow):
         self.content_host.setLayout(self._content_stack)
         root_layout.addWidget(self.content_host)
 
-        self.software_home_bar: QWidget | None = None
-        if not bool(getattr(self.device, 'has_hw_home', True)):
-            self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
-            root_layout.addWidget(self.software_home_bar)
+        if not kiosk:
+            self.software_home_bar: QWidget | None = None
+            if not bool(getattr(self.device, 'has_hw_home', True)):
+                self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
+                root_layout.addWidget(self.software_home_bar)
 
-        # Overlay rendered inside the main window.
-        self.control_center = ControlCenterOverlay(window=self, parent=self.root)
-        self.lock_screen = LockScreenOverlay(window=self, parent=self.root)
+            # Overlay rendered inside the main window.
+            self.control_center = ControlCenterOverlay(window=self, parent=self.root)
+            self.lock_screen = LockScreenOverlay(window=self, parent=self.root)
 
         # Notification overlay sits below the status bar.
         self.notifications = NotificationCenter(
@@ -1041,20 +1043,28 @@ class Deletescape(QMainWindow):
         # Note: the Home screen is now an app (apps/home.py). Boot will launch it.
 
         # Device starts locked by default, but boot may defer displaying the lock screen.
-        if show_lock_screen_on_start:
-            self.show_startup_lock_screen()
-        else:
-            self.lock_screen.setVisible(False)
-            # If the lock screen is suppressed, treat the device as already unlocked.
-            # This keeps UI behavior consistent (e.g., control center) and allows
-            # background tasks which are gated on the first unlock.
+        if kiosk:
             self._locked = False
-            if not self._has_unlocked_once:
-                self._has_unlocked_once = True
-                log.info("First unlock (startup)")
+            self._has_unlocked_once = True
+            self.unlock_device()
+        else:
+            if show_lock_screen_on_start:
+                self.show_startup_lock_screen()
+            else:
+                self.lock_screen.setVisible(False)
+                # If the lock screen is suppressed, treat the device as already unlocked.
+                # This keeps UI behavior consistent (e.g., control center) and allows
+                # background tasks which are gated on the first unlock.
+                self._locked = False
+                if not self._has_unlocked_once:
+                    self._has_unlocked_once = True
+                    log.info("First unlock (startup)")
 
         # Apply wallpapers after UI is ready.
-        self.apply_wallpapers()
+        if not kiosk:
+            # 99.99% of the time a embedded device doesn't need a wallpaper 
+            # neither does it probably have the resources for it
+            self.apply_wallpapers()
 
     def _autostart_apps(self) -> None:
         try:
@@ -1088,6 +1098,8 @@ class Deletescape(QMainWindow):
 
     def show_startup_lock_screen(self) -> None:
         """Show the initial lock screen overlay and log startup timing once."""
+        if self.kiosk:
+            return
         try:
             self._locked = True
             self._show_lock_overlay(True)

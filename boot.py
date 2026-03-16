@@ -1,6 +1,7 @@
 import datetime
 import importlib
 import os
+import random
 import sys
 import platform
 import json
@@ -39,6 +40,7 @@ def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
     """
     if target_size.width() > target_size.height():
         wide = base_path.with_name(base_path.stem + "_wide" + base_path.suffix)
+        # Prefer a landscape-specific asset when available.
         if wide.exists():
             return wide
     return base_path
@@ -92,7 +94,7 @@ class RecoveryWindow(QMainWindow):
                 background-color: rgba(0,0,0,100);
                 color: #FFFFFF;
                 font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
-                font-size: 11px;
+                font-size: 13px;
             }
         """)
 
@@ -224,6 +226,7 @@ def _run_boot_init_checks(
     args
 ) -> tuple[bool, str, dict]:
 
+    time.sleep(random.randint(1,3))
     config_files = [
         base_dir / "config.json",
         base_dir / "deviceconfig.json",

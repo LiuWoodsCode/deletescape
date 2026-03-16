@@ -290,19 +290,6 @@ def _copy_defaults_to_root(root: Path) -> None:
             shutil.copy2(item, dst)
 
 
-def _increment_build_number(p: Path) -> int:
-    debug(f"Incrementing build number at {p}")
-
-    cur = int(p.read_text().strip()) if p.exists() else 0
-    nxt = cur + 1
-
-    p.write_text(f"{nxt}\n")
-
-    debug(f"Build number updated: {cur} -> {nxt}")
-
-    return nxt
-
-
 def _git(cmd: list[str]) -> str:
     try:
         return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
@@ -310,13 +297,13 @@ def _git(cmd: list[str]) -> str:
         return "unknown"
 
 
-def _assemble_build_id(osconfig: dict[str, Any], num: int, dt: datetime, branch: str, commit: str) -> str:
-    build_id = f"{branch}_{commit}_{num:05d}_{dt.astimezone().strftime('%Y%m%d-%H%M')}"
+def _assemble_build_id(osconfig: dict[str, Any], dt: datetime, branch: str, commit: str) -> str:
+    build_id = f"{branch}_{commit}_{dt.astimezone().strftime('%Y%m%d-%H%M')}"
     debug(f"Generated build ID: {build_id}")
     return build_id
 
 
-def _update_osconfig(root: Path, num: int) -> None:
+def _update_osconfig(root: Path) -> None:
     path = root / "osconfig.json"
     debug(f"Updating osconfig at {path}")
 
@@ -330,11 +317,10 @@ def _update_osconfig(root: Path, num: int) -> None:
         "builder_username": getpass.getuser(),
         "builder_hostname": socket.gethostname(),
         "build_datetime": dt.isoformat(timespec="seconds"),
-        "build_number": num,
         "git_branch": git_branch,
         "git_commit": git_commit,
         "builder_hostos": platform.uname(),
-        "build_id": _assemble_build_id(osconfig, num, dt, git_branch, git_commit)
+        "build_id": _assemble_build_id(osconfig, dt, git_branch, git_commit)
     })
 
     path.write_text(json.dumps(osconfig, indent=2) + "\n")
@@ -378,8 +364,6 @@ def build_rootfs(source_root: Path, device_tree_path: Path, output_zip: Path) ->
 
     device_tree_data = _load_device_tree_data(device_tree_path)
 
-    build_number = _increment_build_number(source_root / ".buildnum")
-
     progress = BuildProgress(total_steps=7)
 
     with tempfile.TemporaryDirectory(prefix="deletescape_rootfs_") as tmp:
@@ -410,7 +394,7 @@ def build_rootfs(source_root: Path, device_tree_path: Path, output_zip: Path) ->
         _copy_defaults_to_root(staged_root)
 
         progress.step("Updating osconfig")
-        _update_osconfig(staged_root, build_number)
+        _update_osconfig(staged_root)
 
         progress.step("Writing deviceconfig")
         _write_deviceconfig(staged_root, device_tree_data)

@@ -1482,8 +1482,7 @@ class SettingsWindow(QMainWindow):
             c.addSpacing(4)
 
         self._add_info_rows(c, [
-            ("Build number", str(getattr(os_cfg, "build_number", ""))),
-            ("Build ID", getattr(os_cfg, "build_id", "")),
+            ("Build", getattr(os_cfg, "build_id", "")),
             ("Channel", getattr(os_cfg, "channel", "")),
             ("Builder", builder_display),
             ("Build date", build_datetime),

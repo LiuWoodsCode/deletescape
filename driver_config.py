@@ -14,21 +14,21 @@ def _default_driver(component: str) -> str:
     if comp == "battery":
         return "winnt" if os.name == "nt" else "none"
     if comp == "modem":
-        return "simulated"
+        return "none"
     if comp == "location":
-        return "simulated"
+        return "none"
     if comp == "wifi":
         return "netsh" if os.name == "nt" else "nmcli"
     if comp == "display":
-        return "simulated"
+        return "none"
     if comp == "audio":
-        return "simulated"
+        return "none"
     if comp == "sensors":
-        return "simulated"
+        return "none"
     if comp == "thermals":
         return "vcgencmd" if platform.system() == "Linux" else "none"
     if comp == "vibration":
-        return "simulated"
+        return "none"
     return "none"
 
 

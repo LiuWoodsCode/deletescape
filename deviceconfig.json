@@ -12,6 +12,6 @@
     "audio": "simulated",
     "sensors": "simulated",
     "vibration": "simulated",
-    "thermals": "simulated"
+    "thermals": "none"
   }
 }

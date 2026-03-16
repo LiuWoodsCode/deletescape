@@ -923,7 +923,7 @@ class SoftwareHomeBarWidget(QWidget):
 
 
 class Deletescape(QMainWindow):
-    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True):
+    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True, kiosk: bool = False):
         super().__init__()
 
         log.info("Deletescape init")
@@ -979,8 +979,9 @@ class Deletescape(QMainWindow):
         root_layout.setSpacing(0)
         self.root.setLayout(root_layout)
 
-        self.status_bar = StatusBarWidget(window=self)
-        root_layout.addWidget(self.status_bar)
+        if not kiosk:
+            self.status_bar = StatusBarWidget(window=self)
+            root_layout.addWidget(self.status_bar)
 
         self.content_host = QWidget(self.root)
         self._content_stack = QStackedLayout()
@@ -1023,7 +1024,8 @@ class Deletescape(QMainWindow):
 
         # Apply persisted UI preferences after QApplication exists.
         self.apply_theme()
-        self.status_bar._update_time()
+        if not kiosk:
+            self.status_bar._update_time()
 
         # Button abstraction layer (keyboard shortcuts for now).
         self.buttons = ButtonManager(self)

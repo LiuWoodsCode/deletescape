@@ -335,6 +335,8 @@ def main():
                         help="Disable preloading QtWebEngine during boot")
     parser.add_argument("--llvm", action="store_true",
                         help="Force software rendering")
+    parser.add_argument("--kiosk", action="store_true",
+                        help="Embedded mode")
 
     args = parser.parse_args()
 
@@ -416,7 +418,7 @@ def main():
     # system virtual keyboard plugin.
 
     app = QApplication(sys.argv)
-    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen)
+    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, kiosk=args.kiosk)
     os_instance.show()
 
     splash_dir = base_dir / "splash"

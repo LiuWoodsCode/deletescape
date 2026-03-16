@@ -18,15 +18,17 @@ class OSConfig:
     lock_wallpaper: str = ""
     home_wallpaper: str = ""
     setup_completed: bool = False
+    kangel_enabled: bool = False
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "OSConfig":
+    def from_dict(cls, data: Dict[str, Any], *, default_kangel_enabled: bool = False) -> "OSConfig":
         return cls(
             use_24h_time=bool(data.get("use_24h_time", True)),
             dark_mode=bool(data.get("dark_mode", False)),
             lock_wallpaper=str(data.get("lock_wallpaper", "") or ""),
             home_wallpaper=str(data.get("home_wallpaper", "") or ""),
             setup_completed=bool(data.get("setup_completed", False)),
+            kangel_enabled=bool(data.get("kangel_enabled", default_kangel_enabled)),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -36,6 +38,7 @@ class OSConfig:
             "lock_wallpaper": self.lock_wallpaper,
             "home_wallpaper": self.home_wallpaper,
             "setup_completed": bool(self.setup_completed),
+            "kangel_enabled": bool(self.kangel_enabled),
         }
 
 
@@ -44,16 +47,24 @@ class ConfigStore:
         self.base_dir = base_dir or Path(__file__).resolve().parent
         self.path = self.base_dir / CONFIG_FILE_NAME
 
+    def _default_kangel_enabled(self) -> bool:
+        try:
+            build = OSBuildConfigStore(base_dir=self.base_dir).load()
+            return str(getattr(build, "channel", "")).strip().lower() == "dev"
+        except Exception:
+            return False
+
     def load(self) -> OSConfig:
+        default_kangel_enabled = self._default_kangel_enabled()
         if not self.path.exists():
-            return OSConfig()
+            return OSConfig(kangel_enabled=default_kangel_enabled)
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
-                return OSConfig.from_dict(data)
+                return OSConfig.from_dict(data, default_kangel_enabled=default_kangel_enabled)
         except Exception:
             pass
-        return OSConfig()
+        return OSConfig(kangel_enabled=default_kangel_enabled)
 
     def save(self, config: OSConfig) -> None:
         self.path.write_text(

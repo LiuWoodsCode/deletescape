@@ -940,6 +940,7 @@ class Deletescape(QMainWindow):
                 "use_24h_time": bool(getattr(self.config, "use_24h_time", True)),
                 "lock_wallpaper": str(getattr(self.config, "lock_wallpaper", "")),
                 "home_wallpaper": str(getattr(self.config, "home_wallpaper", "")),
+                "kangel_enabled": bool(getattr(self.config, "kangel_enabled", False)),
             },
         )
 
@@ -1224,6 +1225,13 @@ class Deletescape(QMainWindow):
             self.status_bar._update_time()
             if hasattr(self, 'control_center'):
                 self.control_center._update_time()
+        if key == 'kangel_enabled':
+            try:
+                manager = getattr(self, "kangel_manager", None)
+                if manager is not None:
+                    manager.update_enabled(bool(value))
+            except Exception:
+                log.exception("Failed to update KAngel state")
         if key in {'lock_wallpaper', 'home_wallpaper'}:
             self.apply_wallpapers()
 

@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import platform
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -301,8 +303,15 @@ def _increment_build_number(p: Path) -> int:
     return nxt
 
 
-def _assemble_build_id(osconfig: dict[str, Any], num: int, dt: datetime) -> str:
-    build_id = f"deletescape_dev_{num:05d}_{dt.astimezone().strftime('%Y%m%d%H%M%S')}"
+def _git(cmd: list[str]) -> str:
+    try:
+        return subprocess.check_output(cmd, stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return "unknown"
+
+
+def _assemble_build_id(osconfig: dict[str, Any], num: int, dt: datetime, branch: str, commit: str) -> str:
+    build_id = f"{branch}_{commit}_{num:05d}_{dt.astimezone().strftime('%Y%m%d-%H%M')}"
     debug(f"Generated build ID: {build_id}")
     return build_id
 
@@ -314,12 +323,18 @@ def _update_osconfig(root: Path, num: int) -> None:
     osconfig = json.loads(path.read_text())
     dt = datetime.now().astimezone()
 
+    git_branch = _git(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    git_commit = _git(["git", "rev-parse", "--short", "HEAD"])
+
     osconfig.update({
         "builder_username": getpass.getuser(),
         "builder_hostname": socket.gethostname(),
         "build_datetime": dt.isoformat(timespec="seconds"),
         "build_number": num,
-        "build_id": _assemble_build_id(osconfig, num, dt)
+        "git_branch": git_branch,
+        "git_commit": git_commit,
+        "builder_hostos": platform.uname(),
+        "build_id": _assemble_build_id(osconfig, num, dt, git_branch, git_commit)
     })
 
     path.write_text(json.dumps(osconfig, indent=2) + "\n")

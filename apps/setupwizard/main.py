@@ -37,15 +37,15 @@ class App:
         self.container = container
 
         self.layout = QVBoxLayout()
-        self.layout.setContentsMargins(16, 16, 16, 16)
-        self.layout.setSpacing(12)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
         self.container.setLayout(self.layout)
 
         self._steps = [
             "beta_notice",
             "language_region",
-            "network",
             "license",
+            "network",
             "time_format",
             "appearance",
             "welcome",
@@ -175,10 +175,9 @@ class App:
 
         step = self._steps[self._step_index]
         if step == "beta_notice":
-            self._title("Internal Beta")
+            self._title("Beta Notice")
             self._body_text(
-                "You are using an internal beta build of Deletescape. "
-                "Features may be incomplete and stability is not guaranteed."
+                "You are using a developmental build of deletescapeOS. Features may be incomplete and stability is not guaranteed, and some security features are not available. If you did not expect to see this message, please follow your device's instructions for reinstalling a production version of deletescapeOS."
             )
             self.layout.addStretch(1)
             self._nav_row(back_enabled=False)
@@ -273,7 +272,7 @@ class App:
             self._title("License Agreement")
 
             self._body_text(
-                "Review and expand each section below. You must read and accept this agreement to continue."
+                "Review and expand each section below. You must read and accept the license to continue."
             )
 
             gpl_intro = (
@@ -338,14 +337,15 @@ class App:
                 "the referenced material if requested."
             )
 
-            gpl_text = f"{gpl_intro}\n\n{'-' * 69}\n\n{self._load_gplv3_text()}"
+            gpl_text = f"{gpl_intro}\n\n{self._load_gplv3_text()}"
             self._add_expandable_section("GNU General Public License", gpl_text, expanded=True)
             self._add_expandable_section("Notice For Team Salvato", team_salavo_text)
+
             self._add_expandable_section("Notice For maia arson crimew", maia_text)
 
             self.layout.addStretch(1)
 
-            self._license_accepted = styled_checkbox("I have read this agreement")
+            self._license_accepted = styled_checkbox("I have read these documents")
             self._license_accepted.setChecked(False)
             self.layout.addWidget(self._license_accepted)
 

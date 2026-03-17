@@ -139,7 +139,6 @@ Please file a bug in Radar on your developer workstation!
             if not wlan_ip:
                 description = f"""
 {header}
-
 If you need to connect to the device:
 * For phone, tablet: connect to the workstation over RNDIS
 * All other devices have some sort of LAN or USB port

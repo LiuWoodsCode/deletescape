@@ -122,7 +122,7 @@ Meanwhile, a Pixel 10 should be allowed to use all of the visual flare we can th
 # Over the Air (OTA) updates
 * In the background, updates can be downloaded over Wi-Fi (or cellular if user wants)
 * You can check for updates in settings
-    * Each update contains data like the displayed name, changelog, banner image, estimated time of install, size of update package compacted, size of contents extracted, etc
+    * Each update contains data like the displayed name, changelog, version info, size of update package compacted, size of contents extracted, etc
 * Once downloaded:
     * The user can manually install the update in settings
     * The device can automatically update if user wants
@@ -146,7 +146,8 @@ The following scenerios would use UpdateShell:
 * Factory reset
 * Preparing for first boot
 
- 
+UpdateShell displays a full screen window that immitates visually the standard linux framebuffer console and displays update progress.
+
 # Factory reset
 An option could be added to settings to "Erase user data". Initating a factory reset would require you to confirm mutiple times that you intend to reset the device. A factory reset simply deletes userdata/ and config.json and restores the contents of defaults/
 

@@ -18,6 +18,7 @@ class OSConfig:
     lock_wallpaper: str = ""
     home_wallpaper: str = ""
     setup_completed: bool = False
+    kiosk_appid: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OSConfig":
@@ -27,6 +28,7 @@ class OSConfig:
             lock_wallpaper=str(data.get("lock_wallpaper", "") or ""),
             home_wallpaper=str(data.get("home_wallpaper", "") or ""),
             setup_completed=bool(data.get("setup_completed", False)),
+            kiosk_appid=str(data.get("kiosk_appid", "") or ""),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -36,6 +38,7 @@ class OSConfig:
             "lock_wallpaper": self.lock_wallpaper,
             "home_wallpaper": self.home_wallpaper,
             "setup_completed": bool(self.setup_completed),
+            "kiosk_appid": self.kiosk_appid,
         }
 
 

@@ -1325,6 +1325,28 @@ class SettingsWindow(QMainWindow):
             c.addWidget(self._make_checkbox("USB Debugging", False))
             c.addWidget(self._make_checkbox("Show Visual Touches", False))
             c.addWidget(self._make_checkbox("Force GPU Rendering", True))
+            c.addWidget(Divider())
+
+            kangel_enabled = False
+            if self.host_window is not None and hasattr(self.host_window, "config"):
+                kangel_enabled = bool(getattr(self.host_window.config, "kangel_enabled", False))
+
+            kangel = self._make_checkbox("Enable KAngel SSH shell", kangel_enabled)
+            if self.host_window is not None and hasattr(self.host_window, "set_setting"):
+                kangel.toggled.connect(lambda checked: self.host_window.set_setting("kangel_enabled", bool(checked)))
+            c.addWidget(kangel)
+
+            os_cfg = OSBuildConfigStore().load()
+            channel = str(getattr(os_cfg, "channel", "") or "").strip().lower()
+            manager = getattr(self.host_window, "kangel_manager", None) if self.host_window is not None else None
+            state = "Listening" if bool(getattr(manager, "is_running", lambda: False)()) else "Stopped"
+            note = QLabel(
+                "KAngel listens on TCP 2222 and authenticates with the host Windows/Linux username and password.\n"
+                f"Status: {state}."
+            )
+            note.setWordWrap(True)
+            note.setStyleSheet(f"color: {qcolor_css(MUTED)}; font-size: 12px;")
+            c.addWidget(note)
 
         p = SimpleTestPage("Developer Options", build)
         p.backRequested.connect(lambda: self._go("section.update"))

@@ -254,7 +254,7 @@ def _run_boot_init_checks(
     # -------------------------
     for cfg in config_files:
         ok, detail = _config_file_is_valid_json_dict(cfg)
-        if ok:
+        if not ok:
             bug = _boot_bug(
                 BootBug.CFG_MISSING_OR_INVALID,
                 subsystem="config",

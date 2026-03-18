@@ -28,8 +28,18 @@ Work on integrating the digital assistant with the operating system, for example
 # Embedded deletescape
 Add necessary functionality for running deletescapeOS and applications written for it on embedded systems (think: digital signage, kiosks, etc).
 
-This is currently being worked on in the "embedded_bringup" branch.
+The work for getting deletescape to run graphically as a kiosk is somewhat done, but there's a few things needed to finish:
 
+## Compile builds as embedded
+Builds currently cannot be specified to boot automatically as a kiosk, and cannot currently be compiled as "embedded".
+
+## Issue handling
+Currently, even in embedded state, if an app crashes, the crash handler dialog will still appear and dismissing it will bring you back to the home app. 
+
+Even worse, if an app isn't found... you just get stuck at the ident screen.
+
+## Devices without screens
+This applies to things like IoT and embedded devices like routers and printers. The system should be able to function even without any display running or even PySide installed
 # Compliance with Online Safety Act, that one California bill, etc
 In states that require age verification and/or age attestation, the OOBE should perform a check and block setup in these regions, only allowing you to shut down the device. The message should also tell you next steps.
 

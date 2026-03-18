@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from time import sleep
 import traceback
 
 from PySide6.QtCore import Qt
@@ -143,6 +144,7 @@ class App:
         tabs.addTab(alarm_tab, "Alarms")
 
         # Background loop
+        sleep(1)
         self._start_background()
 
     # -------------------------------------------------------------------------
@@ -215,10 +217,7 @@ class App:
 
     def _start_background(self):
         """Creates a 100ms background tick."""
-        try:
-            self.window.enable_background(True)
-        except Exception:
-            pass
+        self.window.enable_background(True)
 
         if self._task_handle is not None:
             return

@@ -2255,6 +2255,7 @@ class Deletescape(QMainWindow):
         log.info("Launch app", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
 
         prev_id = self.active_app_id
+        self.active_app_id = name
         prev_to_terminate: str | None = None
         if prev_id and prev_id != name:
             # Allow apps to react to backgrounding.

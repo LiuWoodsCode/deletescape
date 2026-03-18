@@ -923,7 +923,7 @@ class SoftwareHomeBarWidget(QWidget):
 
 
 class Deletescape(QMainWindow):
-    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True):
+    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True, embed: bool = False):
         super().__init__()
 
         log.info("Deletescape init")
@@ -955,6 +955,8 @@ class Deletescape(QMainWindow):
             },
         )
 
+        self.embed = embed
+        self.embedapp = None
         self.active_app = None
         self.active_app_id: str | None = None
         self._control_center_open = False
@@ -980,8 +982,9 @@ class Deletescape(QMainWindow):
         root_layout.setSpacing(0)
         self.root.setLayout(root_layout)
 
-        self.status_bar = StatusBarWidget(window=self)
-        root_layout.addWidget(self.status_bar)
+        if not embed:
+            self.status_bar = StatusBarWidget(window=self)
+            root_layout.addWidget(self.status_bar)
 
         self.content_host = QWidget(self.root)
         self._content_stack = QStackedLayout()
@@ -990,10 +993,11 @@ class Deletescape(QMainWindow):
         self.content_host.setLayout(self._content_stack)
         root_layout.addWidget(self.content_host)
 
-        self.software_home_bar: QWidget | None = None
-        if not bool(getattr(self.device, 'has_hw_home', True)):
-            self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
-            root_layout.addWidget(self.software_home_bar)
+        if not embed:
+            self.software_home_bar: QWidget | None = None
+            if not bool(getattr(self.device, 'has_hw_home', True)):
+                self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
+                root_layout.addWidget(self.software_home_bar)
 
         # Overlay rendered inside the main window.
         self.control_center = ControlCenterOverlay(window=self, parent=self.root)
@@ -1024,7 +1028,6 @@ class Deletescape(QMainWindow):
 
         # Apply persisted UI preferences after QApplication exists.
         self.apply_theme()
-        self.status_bar._update_time()
 
         # Button abstraction layer (keyboard shortcuts for now).
         self.buttons = ButtonManager(self)
@@ -1039,21 +1042,43 @@ class Deletescape(QMainWindow):
 
         # Note: the Home screen is now an app (apps/home.py). Boot will launch it.
 
-        # Device starts locked by default, but boot may defer displaying the lock screen.
-        if show_lock_screen_on_start:
-            self.show_startup_lock_screen()
-        else:
-            self.lock_screen.setVisible(False)
-            # If the lock screen is suppressed, treat the device as already unlocked.
-            # This keeps UI behavior consistent (e.g., control center) and allows
-            # background tasks which are gated on the first unlock.
-            self._locked = False
-            if not self._has_unlocked_once:
-                self._has_unlocked_once = True
-                log.info("First unlock (startup)")
+        if embed:
 
-        # Apply wallpapers after UI is ready.
-        self.apply_wallpapers()
+            try:
+                # We need this to launch the app, otherwise it will just bounce
+                self._locked = False 
+                self._has_unlocked_once = True
+
+                # Now hide the lockscreen
+                self.lock_screen.setVisible(False) 
+                self.lock_screen.date_label.setVisible(False)
+                self.lock_screen.time_label.setVisible(False)
+                self.lock_screen.hint_label.setVisible(False)
+                self._show_lock_overlay(False)
+
+                # Now launch the app
+                launch_appid = str(getattr(self.config, 'embed_appid', ""))
+                self.embedapp = launch_appid
+                self.launch_app("kioskinfo")
+            except:
+                pass
+        else:  
+            self.status_bar._update_time()
+            # Device starts locked by default, but boot may defer displaying the lock screen.
+            if show_lock_screen_on_start:
+                self.show_startup_lock_screen()
+            else:
+                self.lock_screen.setVisible(False)
+                # If the lock screen is suppressed, treat the device as already unlocked.
+                # This keeps UI behavior consistent (e.g., control center) and allows
+                # background tasks which are gated on the first unlock.
+                self._locked = False
+                if not self._has_unlocked_once:
+                    self._has_unlocked_once = True
+                    log.info("First unlock (startup)")
+
+            # Apply wallpapers after UI is ready.
+            self.apply_wallpapers()
 
     def _autostart_apps(self) -> None:
         try:
@@ -1087,6 +1112,8 @@ class Deletescape(QMainWindow):
 
     def show_startup_lock_screen(self) -> None:
         """Show the initial lock screen overlay and log startup timing once."""
+        if self.embed:
+            return
         try:
             self._locked = True
             self._show_lock_overlay(True)
@@ -1501,6 +1528,9 @@ class Deletescape(QMainWindow):
             self.close_control_center()
         if self.active_app_id == 'home':
             log.info("Home button pressed but home is active, so do nothing")
+            return
+        if self.embed:
+            log.info("Home button pressed but I'm a kiosk, so do nothing")
             return
         self.launch_app('home')
 
@@ -2249,6 +2279,7 @@ class Deletescape(QMainWindow):
         log.info("Launch app", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
 
         prev_id = self.active_app_id
+        self.active_app_id = name
         prev_to_terminate: str | None = None
         if prev_id and prev_id != name:
             # Allow apps to react to backgrounding.

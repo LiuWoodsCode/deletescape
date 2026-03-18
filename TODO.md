@@ -1,6 +1,24 @@
 # Add virtual keyboard support to QtWebEngine sites
 * QtWebEngine currently 
 
+# License viewer application
+Provide a hidden application to view the same licenses as seen in the setup wizard, launched from the Settings app in some legal section
+
+# Migration (backup and restore)
+Add the ability to backup data from a non-embedded deletescapeOS device or a supported other platform and restore it on the device. 
+
+## Some long stretches 
+Migration things I may or may not go through with.
+
+### Source -> Target app migration
+When your source is running a non-deletescape OS, perhaps we could allow app devs to register the bundle IDs of their iOS, Android, etc apps so the device can install them from the app store.
+
+### Move to deletescapeOS from iOS
+libimobiledevice lets you take backups of iOS devices over USB. As all mobile devices shipping with the OS should have USB-C, it could be possible to plug in an iPhone and have it backup the contents and convert them into deletescapeOS's userdata structure. Considering that these are basically the same as iTunes backups, we could probably restore basically all of the data from an iPhone, including all of your settings.
+
+### Move to deletescapeOS from Android
+This is actually quite harder with just ADB, if not at all. Google has locked down the ability of desktop backups (adb backup) quite a lot over the past few years, so the only thing you might be able to do is move all of the media (/storage/emulated/0) that isn't in Google Photos, the preferences we can get with getprop and settings, and the list of installed apps.
+
 # Notches, hole punches, Dynamic Island, oh my!
 Currently, deletescape assumes that the user can see 100% of the screen, with no obstructions in the way. On many newer phones however, this does not apply. 
 
@@ -10,8 +28,18 @@ Work on integrating the digital assistant with the operating system, for example
 # Embedded deletescape
 Add necessary functionality for running deletescapeOS and applications written for it on embedded systems (think: digital signage, kiosks, etc).
 
-Some functionality nessesary f
+The work for getting deletescape to run graphically as a kiosk is somewhat done, but there's a few things needed to finish:
 
+## Compile builds as embedded
+Builds currently cannot be specified to boot automatically as a kiosk, and cannot currently be compiled as "embedded".
+
+## Issue handling
+Currently, even in embedded state, if an app crashes, the crash handler dialog will still appear and dismissing it will bring you back to the home app. 
+
+Even worse, if an app isn't found... you just get stuck at the ident screen.
+
+## Devices without screens
+This applies to things like IoT and embedded devices like routers and printers. The system should be able to function even without any display running or even PySide installed
 # Compliance with Online Safety Act, that one California bill, etc
 In states that require age verification and/or age attestation, the OOBE should perform a check and block setup in these regions, only allowing you to shut down the device. The message should also tell you next steps.
 
@@ -51,9 +79,6 @@ In the device tree, it could be possible to list the performance class of a devi
 For example, a low power smartwatch or old budget model probably shouldn't be able to assign itself a 1ms tick background task, nor should we try using GPU intensive effects.
 
 Meanwhile, a Pixel 10 should be allowed to use all of the visual flare we can throw at it (as long as the Tensor GPU is supported.)
-
-# Thermal handling
-If we can get the interior temperature of the device, we can do some thermal management ourselves, along with whatever the kernel or SoC is already doing by throttling. This behavior is similar to what thermaltrap on iOS/macOS does
 
 # Termux support
 * Disable QtWebEngine sandbox 
@@ -106,20 +131,34 @@ If we can get the interior temperature of the device, we can do some thermal man
 
 # Over the Air (OTA) updates
 * In the background, updates can be downloaded over Wi-Fi (or cellular if user wants)
+* You can check for updates in settings
+    * Each update contains data like the displayed name, changelog, banner image, estimated time of install, size of update package compacted, size of contents extracted, etc
 * Once downloaded:
     * The user can manually install the update in settings
     * The device can automatically update if user wants
 * Installation:
     * The device closes the Deletescape shell and runs UpdateShell
-        * UpdateShell is stored in a temporary directory along with the update
     * In UpdateShell:
         * US checks the update files for corruption
+            * A copy of the directory structure 
             * If failed, reboot back into the Deletescape shell
         * US copies the existing shell as a backup
         * US copies new shell files over the existing shell
             * If failed, restore from the backup and reboot back into the Deletescape shell
         * US then performs migration tasks (if needed)
         * US quits and boots the new shell
+
+# UpdateShell
+UpdateShell is a program that handles system updates and certain other situations where we cannot have the main deletescape running.
+
+The following scenerios would use UpdateShell:
+* System updates
+* Factory reset
+* Preparing for first boot
+
+ 
+# Factory reset
+An option could be added to settings to "Erase user data". Initating a factory reset would require you to confirm mutiple times that you intend to reset the device. A factory reset simply deletes userdata/ and config.json and restores the contents of defaults/
 
 # Deletescape SSH server
 An SSH server could be provided by the OS using paramiko to allow a special shell specific to deletescape to be accessed. This shell would have the following features:
@@ -131,6 +170,8 @@ An SSH server could be provided by the OS using paramiko to allow a special shel
 * Access a bash shell
 * And plenty more
 
+This is being worked on in "kangel_dev" branch.
+
 # Deletescape DFU protocol
 * Accessible in recovery mode
 * Allows you to:
@@ -141,6 +182,8 @@ An SSH server could be provided by the OS using paramiko to allow a special shel
     * Dump logs
     * Factory reset
     * Flash new deletescape rootfs
+
+A lot of this can be done by KAngel as of right now.
 
 # Make a lot of the UIs seperate windows
 * Each app now runs in a seperate python and manages their own QApplication

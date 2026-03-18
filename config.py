@@ -18,6 +18,7 @@ class OSConfig:
     lock_wallpaper: str = ""
     home_wallpaper: str = ""
     setup_completed: bool = False
+    embed_appid: str = ""
     kangel_enabled: bool = False
 
     @classmethod
@@ -29,6 +30,7 @@ class OSConfig:
             home_wallpaper=str(data.get("home_wallpaper", "") or ""),
             setup_completed=bool(data.get("setup_completed", False)),
             kangel_enabled=bool(data.get("kangel_enabled", default_kangel_enabled)),
+            embed_appid=str(data.get("embed_appid", "") or ""),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -39,6 +41,7 @@ class OSConfig:
             "home_wallpaper": self.home_wallpaper,
             "setup_completed": bool(self.setup_completed),
             "kangel_enabled": bool(self.kangel_enabled),
+            "embed_appid": self.embed_appid,
         }
 
 

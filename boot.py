@@ -234,6 +234,7 @@ def _run_boot_init_checks(
 ) -> tuple[bool, str, dict]:
 
     time.sleep(random.randint(1,3))
+    
     config_files = [
         base_dir / "config.json",
         base_dir / "deviceconfig.json",
@@ -342,6 +343,8 @@ def main():
                         help="Disable preloading QtWebEngine during boot")
     parser.add_argument("--llvm", action="store_true",
                         help="Force software rendering")
+    parser.add_argument("--kiosk", action="store_true",
+                        help="Single app mode (embedded deletescape)")
 
     args = parser.parse_args()
 
@@ -426,14 +429,14 @@ def main():
     # Allow software renderer if we specify it
     if args.llvm:
         log.warning("Using software renderer as --llvm was specified")
-        QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
+        QCoreApplication.setAttribute(Qt.AA_UseSoftwareOpenGL) # This isn't guranteed to work 100% of the time
 
     # We use an in-app virtual keyboard instead of the Qt virtual keyboard
     # plugin. Do not set `QT_IM_MODULE` here so Qt won't try to load the
     # system virtual keyboard plugin.
 
     app = QApplication(sys.argv)
-    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen)
+    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)

@@ -1,0 +1,8 @@
+{
+  "appId": "kioskinfo",
+  "bundleId": "com.deletescapeos.kioskinfo",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "hidden": true
+}

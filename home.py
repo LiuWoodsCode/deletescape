@@ -1292,7 +1292,7 @@ class Deletescape(QMainWindow):
 
                 # Custom dark palette
                 palette = QPalette()
-                palette.setColor(QPalette.Window, QColor(53, 53, 53))
+                palette.setColor(QPalette.Window, QColor("#131313"))
                 palette.setColor(QPalette.WindowText, Qt.white)
                 palette.setColor(QPalette.Base, QColor(35, 35, 35))
                 palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))

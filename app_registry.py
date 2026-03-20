@@ -86,7 +86,7 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def _normalize_app_id(folder_name: str, manifest: dict[str, Any]) -> str:
-    raw = manifest.get("bundleID")
+    raw = manifest.get("bundleId")
     raw = _coerce_str(raw)
 
     if raw and raw.strip():

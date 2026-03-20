@@ -92,7 +92,7 @@ def _normalize_app_id(folder_name: str, manifest: dict[str, Any]) -> str:
     if raw and raw.strip():
         return raw.strip()
 
-    log.warning("Missing or invalid bundle_id in manifest. A bundle ID will be required in a future release.", folder_name)
+    log.warning("Missing or invalid bundle_id in manifest.json for '%s' - A bundle ID will be required in a future release.", folder_name)
     return folder_name
 
 def load_app_class(descriptor: AppDescriptor) -> type | None:

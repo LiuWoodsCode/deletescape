@@ -86,10 +86,14 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def _normalize_app_id(folder_name: str, manifest: dict[str, Any]) -> str:
-    raw = manifest.get("id") or manifest.get("appId") or manifest.get("app_id")
+    raw = manifest.get("bundle_id")
     raw = _coerce_str(raw)
-    return raw.strip() if raw and raw.strip() else folder_name
 
+    if raw and raw.strip():
+        return raw.strip()
+
+    log.warning("Missing or invalid bundle_id in manifest. A bundle ID will be required in a future release.", folder_name)
+    return folder_name
 
 def load_app_class(descriptor: AppDescriptor) -> type | None:
     """Import (or re-import) an app's `main.py` and return its `App` class.

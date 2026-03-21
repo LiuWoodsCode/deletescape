@@ -1,6 +1,6 @@
 {
   "appId": "allapps",
-  "bundleId": "com.deletescapeos.allapps",
+  "bundleId": "org.deletescapeos.allapps",
   "displayName": "All Apps",
   "build": 1,
   "version": "0.1.0",

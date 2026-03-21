@@ -1327,8 +1327,8 @@ class Deletescape(QMainWindow):
 
     # New: show the home app (used by apps to return to home)
     def show_home(self):
-        if 'com.deletescapeos.home' in self.apps:
-            self.launch_app('com.deletescapeos.home')
+        if 'org.deletescapeos.home' in self.apps:
+            self.launch_app('org.deletescapeos.home')
 
     # ---------------------------------------------------------
     # App API: notifications + background tasks
@@ -1518,13 +1518,13 @@ class Deletescape(QMainWindow):
         # Global "Home" button: quit current app and return to home screen.
         if self._control_center_open:
             self.close_control_center()
-        if self.active_app_id == 'com.deletescapeos.home':
+        if self.active_app_id == 'org.deletescapeos.home':
             log.info("Home button pressed but home is active, so I'll pretend like nothing happened")
             return
         if self.embed:
             log.info("Home button pressed but I'm a kiosk, so I'll pretend like nothing happened")
             return
-        self.launch_app('com.deletescapeos.home')
+        self.launch_app('org.deletescapeos.home')
 
     def _terminate_app(self, app_id: str) -> None:
         log.info("Terminate app", extra={"app_id": str(app_id)})
@@ -2094,8 +2094,8 @@ class Deletescape(QMainWindow):
                     pass
 
             try:
-                if 'com.deletescapeos.home' in self.apps:
-                    self.launch_app('com.deletescapeos.home')
+                if 'org.deletescapeos.home' in self.apps:
+                    self.launch_app('org.deletescapeos.home')
             except Exception:
                 # If Home itself fails, leave the shell running with status bar.
                 try:
@@ -2197,8 +2197,8 @@ class Deletescape(QMainWindow):
             log.info("First unlock")
         self._show_lock_overlay(False)
         self._set_app_paused(False)
-        if self.active_app_id is None and 'com.deletescapeos.home' in self.apps:
-            self.launch_app('com.deletescapeos.home')
+        if self.active_app_id is None and 'org.deletescapeos.home' in self.apps:
+            self.launch_app('org.deletescapeos.home')
 
     def has_unlocked_once(self) -> bool:
         return bool(self._has_unlocked_once)
@@ -2259,7 +2259,7 @@ class Deletescape(QMainWindow):
             log.warning("Attempting to open app while locked, ignoring...", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
             return
 
-        if name == 'com.deletescapeos.home' and not self.is_setup_completed() and 'setupwizard' in self.apps:
+        if name == 'org.deletescapeos.home' and not self.is_setup_completed() and 'setupwizard' in self.apps:
             log.warning("Attempting to go home during setup, going to setup instead...", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
             name = 'setupwizard'
 

@@ -1,6 +1,6 @@
 {
   "appId": "bgtester",
-  "bundleId": "com.deletescapeos.bgtester",
+  "bundleId": "org.deletescapeos.bgtester",
   "displayName": "BG Tester",
   "build": 1,
   "version": "0.1.0",

@@ -1,6 +1,6 @@
 {
   "appId": "crimew",
-  "bundleId": "com.deletescapeos.crimew",
+  "bundleId": "org.deletescapeos.crimew",
   "displayName": "Project Crimew",
   "build": 1,
   "version": "0.1.0",

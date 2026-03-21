@@ -1,6 +1,6 @@
 {
   "appId": "maps",
-  "bundleId": "com.deletescapeos.maps",
+  "bundleId": "org.deletescapeos.maps",
   "displayName": "Map",
   "build": 1,
   "version": "0.1.0",

@@ -1,6 +1,6 @@
 {
   "appId": "notifytester",
-  "bundleId": "com.deletescapeos.notifytester",
+  "bundleId": "org.deletescapeos.notifytester",
   "displayName": "Notify Tester",
   "build": 1,
   "version": "0.1.0",

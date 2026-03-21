@@ -1,6 +1,6 @@
 {
   "appId": "escaptive",
-  "bundleId": "com.deletescapeos.escaptive",
+  "bundleId": "org.deletescapeos.escaptive",
   "displayName": "EscCaptive",
   "build": 1,
   "version": "0.1.0",

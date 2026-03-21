@@ -21,7 +21,6 @@ class AppDescriptor:
     folder: Path
     main_py: Path
     display_name: str
-    bundle_id: str | None
     build: int | None
     version: str | None
     permissions: list[str]
@@ -272,7 +271,6 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
             folder=entry,
             main_py=main_py,
             display_name=display_name,
-            bundle_id=bundle_id,
             build=build,
             version=version,
             permissions=permissions,

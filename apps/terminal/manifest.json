@@ -1,6 +1,5 @@
 {
-  "appId": "terminal",
-  "bundleId": "com.deletescapeos.terminal",
+  "bundleId": "org.deletescapeos.terminal",
   "displayName": "Terminal",
   "build": 1,
   "version": "0.1.0",

@@ -1,6 +1,5 @@
 {
-  "appId": "system",
-  "bundleId": "com.deletescapeos.system",
+  "bundleId": "org.deletescapeos.system",
   "displayName": "deletescapeOS",
   "build": 1,
   "version": "0.1.0",

@@ -1,6 +1,5 @@
 {
-  "appId": "assistant",
-  "bundleId": "com.deletescapeos.assistant",
+  "bundleId": "org.deletescapeos.assistant",
   "displayName": "Assistant",
   "build": 1,
   "version": "0.1.0",

@@ -267,7 +267,7 @@ def _run_boot_init_checks(
         )
         return False, "Application registry unavailable", bug
 
-    if "home" not in os_instance.apps:
+    if "org.deletescapeos.home" not in os_instance.apps:
         bug = _boot_bug(
             BootBug.HOME_APP_REQUIRED,
             subsystem="appreg",

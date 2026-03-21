@@ -1,5 +1,5 @@
 {
-  "id": "filemanager",
+  "bundleId": "org.deletescapeos.assistant",
   "displayName": "Files",
   "version": "0.1.0",
   "build": 1,

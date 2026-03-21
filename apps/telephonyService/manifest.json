@@ -1,5 +1,6 @@
 {
   "id": "telephonyService",
+  "bundleId": "org.deletescapeos.telephonyservice",
   "displayName": "Telephony Service",
   "version": "1.0.0",
   "build": 1,

@@ -1,6 +1,5 @@
 {
-  "appId": "gallery",
-  "bundleId": "com.deletescapeos.gallery",
+  "bundleId": "org.deletescapeos.gallery",
   "displayName": "Gallery",
   "file_handlers": [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"],
   "build": 1,

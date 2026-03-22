@@ -1,6 +1,5 @@
 {
-  "appId": "mobilebrowse",
-  "bundleId": "com.deletescapeos.browser",
+  "bundleId": "org.deletescapeos.browser",
   "displayName": "Browser (Orig)",
   "build": 1,
   "version": "0.1.0",

@@ -1,5 +1,5 @@
 {
-  "id": "camera",
+  "bundleId": "org.deletescapeos.camera",
   "displayName": "Camera",
   "version": "0.1.0",
   "build": 1,

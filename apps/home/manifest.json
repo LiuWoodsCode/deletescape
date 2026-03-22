@@ -1,6 +1,5 @@
 {
-  "appId": "home",
-  "bundleId": "com.deletescapeos.home",
+  "bundleId": "org.deletescapeos.home",
   "displayName": "Home",
   "build": 1,
   "version": "0.1.0",

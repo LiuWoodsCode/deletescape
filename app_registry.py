@@ -21,7 +21,6 @@ class AppDescriptor:
     folder: Path
     main_py: Path
     display_name: str
-    bundle_id: str | None
     build: int | None
     version: str | None
     permissions: list[str]
@@ -86,10 +85,14 @@ def _load_manifest(manifest_path: Path) -> dict[str, Any]:
 
 
 def _normalize_app_id(folder_name: str, manifest: dict[str, Any]) -> str:
-    raw = manifest.get("id") or manifest.get("appId") or manifest.get("app_id")
+    raw = manifest.get("bundleId")
     raw = _coerce_str(raw)
-    return raw.strip() if raw and raw.strip() else folder_name
 
+    if raw and raw.strip():
+        return raw.strip()
+
+    log.warning("Missing or invalid bundle_id in manifest.json for '%s' - A bundle ID will be required in a future release.", folder_name)
+    return folder_name
 
 def load_app_class(descriptor: AppDescriptor) -> type | None:
     """Import (or re-import) an app's `main.py` and return its `App` class.
@@ -268,7 +271,6 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
             folder=entry,
             main_py=main_py,
             display_name=display_name,
-            bundle_id=bundle_id,
             build=build,
             version=version,
             permissions=permissions,

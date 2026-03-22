@@ -1,5 +1,5 @@
 {
-  "id": "weather",
+  "bundleId": "org.deletescapeos.weather",
   "displayName": "Weather",
   "version": "0.1.0",
   "build": 1,

@@ -306,7 +306,7 @@ class Taskbar(QWidget):
     def _on_apps_click(self):
         # Open the home app as a frameless panel in the lower-left corner.
         try:
-            app_id = 'desktopapplauncher'
+            app_id = 'org.deletescapeos.desktopapplauncher'
             # If already running, adjust its subwindow.
             if app_id in self.shell._running:
                 running = self.shell._running.get(app_id)

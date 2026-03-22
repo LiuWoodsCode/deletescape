@@ -1,6 +1,5 @@
 {
-  "appId": "settings",
-  "bundleId": "com.deletescapeos.settings",
+  "bundleId": "org.deletescapeos.settings",
   "displayName": "Settings",
   "build": 1,
   "version": "0.1.0",

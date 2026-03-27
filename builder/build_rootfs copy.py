@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import platform
 import re
@@ -355,200 +354,11 @@ def _zip_directory(d: Path, out: Path) -> None:
 
     debug("Zip archive created successfully")
 
-
-def _collect_component_entries(root: Path, relative_paths: list[Path]) -> list[str]:
-    entries: set[str] = set()
-
-    for rel in relative_paths:
-        src = root / rel
-
-        if not src.exists():
-            debug(f"Skipping missing component path: {rel}")
-            continue
-
-        if src.is_file():
-            entries.add(rel.as_posix())
-            continue
-
-        children = sorted(src.rglob("*"))
-
-        if not children:
-            entries.add(rel.as_posix().rstrip("/") + "/")
-            continue
-
-        for child in children:
-            child_rel = child.relative_to(root).as_posix()
-
-            if child.is_dir() and not any(child.iterdir()):
-                entries.add(child_rel.rstrip("/") + "/")
-            elif child.is_file():
-                entries.add(child_rel)
-
-    return sorted(entries)
-
-
-def _zip_selected_paths(root: Path, relative_paths: list[Path], out_zip: Path) -> list[str]:
-    debug(f"Creating component zip {out_zip} from {len(relative_paths)} path(s)")
-
-    entries = _collect_component_entries(root, relative_paths)
-
-    out_zip.parent.mkdir(parents=True, exist_ok=True)
-
-    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        for entry in entries:
-            if entry.endswith("/"):
-                debug(f"Adding empty dir to component zip: {entry}")
-                z.writestr(entry, "")
-            else:
-                debug(f"Adding path to component zip: {entry}")
-                z.write(root / Path(entry), entry)
-
-    return entries
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            digest.update(chunk)
-
-    return digest.hexdigest()
-
-
-def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
-    debug("Creating OTA bundle")
-
-    component_zips: dict[str, Path] = {}
-    component_layout: dict[str, Any] = {}
-
-    with tempfile.TemporaryDirectory(prefix="deletescape_ota_components_") as component_tmp:
-        component_dir = Path(component_tmp)
-
-        def add_component(zip_name: str, relative_paths: list[Path]) -> None:
-            if not relative_paths:
-                debug(f"Skipping empty component list for {zip_name}")
-                return
-
-            zip_path = component_dir / zip_name
-            entries = _zip_selected_paths(staged_root, relative_paths, zip_path)
-
-            with zipfile.ZipFile(zip_path, "r") as z:
-                if len(z.infolist()) == 0:
-                    debug(f"Skipping empty component zip: {zip_name}")
-                    return
-
-            component_zips[zip_name] = zip_path
-            component_layout[zip_name] = {
-                "zip_path": f"components/{zip_name}",
-                "install_root": "/",
-                "entries": [
-                    {
-                        "archive_path": entry,
-                        "install_path": f"/{entry.rstrip('/')}",
-                        "type": "directory" if entry.endswith("/") else "file",
-                    }
-                    for entry in entries
-                ],
-            }
-
-        apps_dir = staged_root / "apps"
-        if apps_dir.exists() and apps_dir.is_dir():
-            app_common = [
-                Path("apps") / p.name
-                for p in apps_dir.iterdir()
-                if p.is_file() and p.name != "__pycache__"
-            ]
-            add_component("apps_common.zip", app_common)
-
-            for app_dir in sorted(apps_dir.iterdir(), key=lambda p: p.name.lower()):
-                if app_dir.is_dir() and app_dir.name != "__pycache__":
-                    add_component(f"app_{app_dir.name}.zip", [Path("apps") / app_dir.name])
-
-        splash_dir = staged_root / "splash"
-        if splash_dir.exists():
-            add_component("splash_screens.zip", [Path("splash")])
-
-        kernel_dir = staged_root / "kernel"
-        if kernel_dir.exists():
-            add_component("sayori_kernel.zip", [Path("kernel")])
-
-        drivers_dir = staged_root / "drivers"
-        if drivers_dir.exists() and drivers_dir.is_dir():
-            drivers_common = [
-                Path("drivers") / p.name
-                for p in drivers_dir.iterdir()
-                if p.is_file() and p.name != "__pycache__"
-            ]
-            add_component("drivers_common.zip", drivers_common)
-
-            for driver_component in sorted(drivers_dir.iterdir(), key=lambda p: p.name.lower()):
-                if driver_component.is_dir() and driver_component.name != "__pycache__":
-                    add_component(
-                        f"driver_{driver_component.name}.zip",
-                        [Path("drivers") / driver_component.name],
-                    )
-
-        icons_dir = staged_root / "assets" / "icons"
-        if icons_dir.exists():
-            add_component("system_icons.zip", [Path("assets") / "icons"])
-
-        wallpapers_dir = staged_root / "assets" / "wallpaper"
-        if wallpapers_dir.exists():
-            add_component("wallpapers.zip", [Path("assets") / "wallpaper"])
-
-        defaults_dir = staged_root / "defaults"
-        if defaults_dir.exists():
-            add_component("defaults.zip", [Path("defaults")])
-
-        core_os_entries = [
-            Path(item.name)
-            for item in staged_root.iterdir()
-            if item.is_file() and item.name not in {"deviceconfig.json", "osconfig.json"}
-        ]
-        add_component("core_os.zip", core_os_entries)
-
-        if not component_zips:
-            raise RuntimeError("No OTA components were generated.")
-
-        manifest = {
-            "algorithm": "sha256",
-            "components": {
-                zip_name: _sha256_file(zip_path)
-                for zip_name, zip_path in sorted(component_zips.items())
-            },
-        }
-
-        output_zip.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as ota:
-            for zip_name, zip_path in sorted(component_zips.items()):
-                ota.write(zip_path, Path("components") / zip_name)
-
-            osconfig_path = staged_root / "osconfig.json"
-            deviceconfig_path = staged_root / "deviceconfig.json"
-
-            if not osconfig_path.exists():
-                raise FileNotFoundError("staged root missing osconfig.json")
-
-            if not deviceconfig_path.exists():
-                raise FileNotFoundError("staged root missing deviceconfig.json")
-
-            ota.write(osconfig_path, "osconfig.json")
-            ota.write(deviceconfig_path, "deviceconfig.json")
-            ota.writestr("hashes.json", json.dumps(manifest, indent=2) + "\n")
-
-    debug("OTA zip created successfully")
-
 # ============================================================
 # MAIN BUILD
 # ============================================================
 
-def build_rootfs(
-    source_root: Path,
-    device_tree_path: Path,
-    output_zip: Path,
-    build_format: str = "rootfs",
-) -> None:
+def build_rootfs(source_root: Path, device_tree_path: Path, output_zip: Path) -> None:
 
     debug("Starting rootfs build")
 
@@ -565,6 +375,9 @@ def build_rootfs(
         progress.step("Copying source to staging")
         _copy_root_to_stage(source_root, staged_root, output_zip)
 
+        progress.step("Python syntax check")
+        _fail_on_python_syntax_errors(staged_root, progress)
+
         progress.step("Cleaning staged filesystem")
         _delete_directory_if_exists(staged_root / "logs")
         _delete_directory_if_exists(staged_root / ".git")
@@ -573,13 +386,9 @@ def build_rootfs(
         _delete_directory_if_exists(staged_root / "assistant" / "backend")
         _delete_directory_if_exists(staged_root / "docs")
         _delete_directory_if_exists(staged_root / "builder")
-        _delete_directory_if_exists(staged_root / ".venv")
         _delete_directory_if_exists(staged_root / "notes")
         _clear_directory_contents(staged_root / "userdata")
         _remove_pycache_and_pyc(staged_root)
-
-        progress.step("Python syntax check")
-        _fail_on_python_syntax_errors(staged_root, progress)
 
         progress.step("Copying defaults")
         _copy_defaults_to_root(staged_root)
@@ -590,12 +399,8 @@ def build_rootfs(
         progress.step("Writing deviceconfig")
         _write_deviceconfig(staged_root, device_tree_data)
 
-        if build_format == "ota":
-            progress.step("Creating OTA zip")
-            _build_ota_zip(staged_root, output_zip)
-        else:
-            progress.step("Creating rootfs zip")
-            _zip_directory(staged_root, output_zip)
+        progress.step("Creating rootfs zip")
+        _zip_directory(staged_root, output_zip)
 
     debug("Build completed successfully")
 
@@ -609,7 +414,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device-tree")
     parser.add_argument("--source-root", default=str(_repo_root()))
     parser.add_argument("--output", default=str(_repo_root() / "output.zip"))
-    parser.add_argument("--format", choices=["rootfs", "ota"], default="rootfs")
     parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
@@ -636,7 +440,6 @@ def main() -> int:
             Path(args.source_root),
             device_tree,
             Path(args.output),
-            args.format,
         )
 
     except Exception as exc:

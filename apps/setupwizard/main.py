@@ -102,8 +102,21 @@ class App:
                     return path.read_text(encoding="utf-8").strip()
                 except OSError:
                     break
-        return "gplv3.txt not found. Please add the GPLv3 license text to that file."
+        raise "The system cannot find a license agreement in gplv3.txt and cannot legally continue."
 
+    def _load_incsan_text(self) -> str:
+        candidates = [
+            Path(__file__).with_name("inclusivesans.txt"),
+            Path(__file__).resolve().parents[2] / "inclusivesans.txt",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    return path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    break
+        raise "The system cannot find a license agreement in inclusivesans.txt and cannot legally continue."
+    
     def _add_expandable_section(self, title: str, text: str, *, expanded: bool = False) -> None:
         section = QWidget()
         section_layout = QVBoxLayout(section)
@@ -311,7 +324,7 @@ class App:
                 "including names, aliases, and phrases that have become associated with public events and "
                 "internet culture. These references are included as cultural and historical references only.\n\n"
                 "The following names, identifiers, and phrases may appear within this software or its "
-                "documentation:\n"
+                "documentation:\n_load_gplv3_text"
                 "- maia arson crimew\n"
                 "- Tillie Kottmann\n"
                 "- Tillie crimew\n"
@@ -339,6 +352,10 @@ class App:
 
             gpl_text = f"{gpl_intro}\n\n{self._load_gplv3_text()}"
             self._add_expandable_section("GNU General Public License", gpl_text, expanded=True)
+
+            inc_text = self._load_incsan_text()
+            self._add_expandable_section("OFL (Inclusive Sans)", inc_text, expanded=True)
+
             self._add_expandable_section("Notice For Team Salvato", team_salavo_text)
 
             self._add_expandable_section("Notice For maia arson crimew", maia_text)

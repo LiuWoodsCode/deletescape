@@ -1300,7 +1300,7 @@ class Deletescape(QMainWindow):
 
                 # Custom dark palette
                 palette = QPalette()
-                palette.setColor(QPalette.Window, QColor(53, 53, 53))
+                palette.setColor(QPalette.Window, QColor("#131313"))
                 palette.setColor(QPalette.WindowText, Qt.white)
                 palette.setColor(QPalette.Base, QColor(35, 35, 35))
                 palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
@@ -1316,7 +1316,21 @@ class Deletescape(QMainWindow):
                 app.setPalette(palette)
 
             else:
+                palette = QPalette()
                 app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+                palette.setColor(QPalette.Window, QColor("#F0F0F0"))
+                palette.setColor(QPalette.WindowText, Qt.black)
+                palette.setColor(QPalette.Base, Qt.white)
+                palette.setColor(QPalette.AlternateBase, QColor("#E0E0E0"))
+                palette.setColor(QPalette.ToolTipBase, Qt.black)
+                palette.setColor(QPalette.ToolTipText, Qt.white)
+                palette.setColor(QPalette.Text, Qt.black)
+                palette.setColor(QPalette.Button, QColor("#E0E0E0"))
+                palette.setColor(QPalette.ButtonText, Qt.black)
+                palette.setColor(QPalette.BrightText, Qt.red)
+                palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+                palette.setColor(QPalette.HighlightedText, Qt.white)
+                app.setPalette(palette)
         else:
             if self.config.dark_mode:
                 app.styleHints().setColorScheme(Qt.ColorScheme.Dark)

@@ -26,6 +26,7 @@ from wifi import (
 from config import ConfigStore, OSBuildConfigStore, OSConfig, DeviceConfigStore, DeviceConfig
 from fs_layout import get_user_data_layout
 from app_registry import AppDescriptor, discover_apps, load_app_class, unload_app_modules
+from dsui_qss_gen import DARK_PALETTE, LIGHT_PALETTE, generate_qt_stylesheet
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,10 +43,11 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QGraphicsBlurEffect,
+    QGraphicsOpacityEffect,
     QGraphicsPixmapItem,
     QGraphicsScene,
 )
-from PySide6.QtCore import Qt, QTimer, QRectF, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QRectF, QRect, QObject, QThread, Signal, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap, QIcon
 
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -959,6 +961,7 @@ class Deletescape(QMainWindow):
         self.active_app = None
         self.active_app_id: str | None = None
         self._control_center_open = False
+        self._control_center_animating = False
         self._handling_crash = False
         self._locked = True
         self._has_unlocked_once = False
@@ -990,6 +993,17 @@ class Deletescape(QMainWindow):
         self._content_stack.setContentsMargins(0, 0, 0, 0)
         self._content_stack.setSpacing(0)
         self.content_host.setLayout(self._content_stack)
+        self._content_opacity = QGraphicsOpacityEffect(self.content_host)
+        self._content_opacity.setOpacity(1.0)
+        self.content_host.setGraphicsEffect(self._content_opacity)
+        self._content_fade_anim = QPropertyAnimation(self._content_opacity, b"opacity", self)
+        self._content_fade_anim.setDuration(180)
+        self._content_fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._control_center_opacity = QGraphicsOpacityEffect(self.control_center if hasattr(self, 'control_center') else self.root)
+        self._control_center_anim = QPropertyAnimation(self.control_center if hasattr(self, 'control_center') else self.root, b"geometry", self)
+        self._control_center_opacity_anim = QPropertyAnimation(self._control_center_opacity, b"opacity", self)
+
         root_layout.addWidget(self.content_host)
 
         if not embed:
@@ -1000,7 +1014,21 @@ class Deletescape(QMainWindow):
 
         # Overlay rendered inside the main window.
         self.control_center = ControlCenterOverlay(window=self, parent=self.root)
+        self.control_center.setGraphicsEffect(self._control_center_opacity)
+        self._control_center_opacity.setOpacity(0.0)
+        self._control_center_anim = QPropertyAnimation(self.control_center, b"geometry", self)
+        self._control_center_anim.setDuration(260)
+        self._control_center_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._control_center_opacity_anim = QPropertyAnimation(self._control_center_opacity, b"opacity", self)
+        self._control_center_opacity_anim.setDuration(220)
+        self._control_center_opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.lock_screen = LockScreenOverlay(window=self, parent=self.root)
+        self._lock_opacity = QGraphicsOpacityEffect(self.lock_screen)
+        self._lock_opacity.setOpacity(0.0)
+        self.lock_screen.setGraphicsEffect(self._lock_opacity)
+        self._lock_fade_anim = QPropertyAnimation(self._lock_opacity, b"opacity", self)
+        self._lock_fade_anim.setDuration(220)
+        self._lock_fade_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         # Notification overlay sits below the status bar.
         self.notifications = NotificationCenter(
@@ -1265,6 +1293,22 @@ class Deletescape(QMainWindow):
         # Notify the active app (e.g., Home) if it wants to update its background.
         self._call_active_app_hook('on_wallpaper_changed')
 
+    def _build_custom_app_qss(self) -> str:
+        dark_mode = bool(getattr(self.config, "dark_mode", False))
+        theme = DARK_PALETTE if dark_mode else LIGHT_PALETTE
+        return generate_qt_stylesheet(theme=theme)
+
+    def _refresh_custom_qss_apps(self) -> None:
+        stylesheet = self._build_custom_app_qss()
+        for app_id, running in list(self._running_apps.items()):
+            desc = self.apps.get(app_id)
+            if desc is None or not bool(getattr(desc, "receive_custom_qss", False)):
+                continue
+            try:
+                running.widget.setStyleSheet(stylesheet)
+            except Exception:
+                log.exception("Failed to refresh custom app QSS", extra={"app_id": str(app_id)})
+
     def apply_theme(self):
         app = QApplication.instance()
         if app is None:
@@ -1328,6 +1372,11 @@ class Deletescape(QMainWindow):
                 app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
             else:
                 app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+
+        try:
+            self._refresh_custom_qss_apps()
+        except Exception:
+            log.exception("Failed to refresh custom QSS apps after theme change")
              
     # Helper to return apps that are not marked hidden
     def get_visible_apps(self):
@@ -1670,6 +1719,12 @@ class Deletescape(QMainWindow):
 
         app_widget = QWidget(self.content_host)
         self._content_stack.addWidget(app_widget)
+
+        if bool(getattr(desc, "receive_custom_qss", False)):
+            try:
+                app_widget.setStyleSheet(self._build_custom_app_qss())
+            except Exception:
+                log.exception("Failed to inject custom app QSS", extra={"app_id": str(app_id)})
 
         log.info("Instantiate app", extra={"app_id": str(app_id), "class": getattr(app_class, "__name__", str(app_class))})
 
@@ -2140,6 +2195,74 @@ class Deletescape(QMainWindow):
 
         self._sync_overlay_z_order()
 
+    def _play_content_transition(self) -> None:
+        try:
+            self._content_fade_anim.stop()
+            self._content_opacity.setOpacity(0.72)
+            self._content_fade_anim.setStartValue(0.72)
+            self._content_fade_anim.setEndValue(1.0)
+            self._content_fade_anim.start()
+        except Exception:
+            pass
+
+    def _control_center_rects(self) -> tuple[QRect, QRect]:
+        end_rect = QRect(self.root.rect())
+        start_rect = QRect(end_rect)
+        start_rect.moveTop(-end_rect.height())
+        return start_rect, end_rect
+
+    def _animate_control_center_open(self) -> None:
+        start_rect, end_rect = self._control_center_rects()
+        self._control_center_animating = True
+        self.control_center.setGeometry(start_rect)
+        self.control_center.setVisible(True)
+        self._sync_overlay_z_order()
+
+        try:
+            self._control_center_anim.stop()
+            self._control_center_opacity_anim.stop()
+        except Exception:
+            pass
+
+        self._control_center_opacity.setOpacity(0.0)
+        self._control_center_anim.setStartValue(start_rect)
+        self._control_center_anim.setEndValue(end_rect)
+        self._control_center_opacity_anim.setStartValue(0.0)
+        self._control_center_opacity_anim.setEndValue(1.0)
+        self._control_center_anim.start()
+        self._control_center_opacity_anim.start()
+
+        self._control_center_opacity_anim.finished.connect(self._finish_control_center_open, Qt.UniqueConnection)
+
+    def _finish_control_center_open(self) -> None:
+        self._control_center_animating = False
+
+    def _animate_control_center_close(self) -> None:
+        start_rect, end_rect = self._control_center_rects()
+        self._control_center_animating = True
+
+        try:
+            self._control_center_anim.stop()
+            self._control_center_opacity_anim.stop()
+        except Exception:
+            pass
+
+        self._control_center_anim.setStartValue(self.control_center.geometry())
+        self._control_center_anim.setEndValue(start_rect)
+        self._control_center_opacity_anim.setStartValue(float(self._control_center_opacity.opacity()))
+        self._control_center_opacity_anim.setEndValue(0.0)
+
+        def _finalize_close() -> None:
+            self.control_center.setVisible(False)
+            self._set_app_paused(False)
+            self._control_center_open = False
+            self._control_center_animating = False
+            self._sync_overlay_z_order()
+
+        self._control_center_opacity_anim.finished.connect(_finalize_close, Qt.SingleShotConnection)
+        self._control_center_anim.start()
+        self._control_center_opacity_anim.start()
+
     def _sync_overlay_z_order(self) -> None:
         """Ensure overlays stack correctly.
 
@@ -2181,8 +2304,34 @@ class Deletescape(QMainWindow):
         if not hasattr(self, 'lock_screen'):
             return
         self._sync_overlay_geometry()
-        self.lock_screen.setVisible(visible)
-        self._sync_overlay_z_order()
+        try:
+            self._lock_fade_anim.stop()
+        except Exception:
+            pass
+
+        if bool(visible):
+            self.lock_screen.setVisible(True)
+            self.lock_screen.raise_()
+            self._lock_opacity.setOpacity(0.0)
+            self._lock_fade_anim.setStartValue(0.0)
+            self._lock_fade_anim.setEndValue(1.0)
+            self._lock_fade_anim.start()
+            self._sync_overlay_z_order()
+            return
+
+        if not self.lock_screen.isVisible():
+            self._sync_overlay_z_order()
+            return
+
+        self._lock_fade_anim.setStartValue(float(self._lock_opacity.opacity()))
+        self._lock_fade_anim.setEndValue(0.0)
+
+        def _finish_unlock() -> None:
+            self.lock_screen.setVisible(False)
+            self._sync_overlay_z_order()
+
+        self._lock_fade_anim.finished.connect(_finish_unlock, Qt.SingleShotConnection)
+        self._lock_fade_anim.start()
 
     def is_locked(self) -> bool:
         return self._locked
@@ -2234,7 +2383,7 @@ class Deletescape(QMainWindow):
     def open_control_center(self):
         if self._locked:
             return
-        if self._control_center_open:
+        if self._control_center_open or self._control_center_animating:
             return
         log.info("Open control center")
         self._control_center_open = True
@@ -2249,17 +2398,13 @@ class Deletescape(QMainWindow):
             log.exception("Failed to capture blurred control center background")
 
         self._set_app_paused(True)
-        self.control_center.setVisible(True)
-        self._sync_overlay_z_order()
+        self._animate_control_center_open()
 
     def close_control_center(self):
-        if not self._control_center_open:
+        if (not self._control_center_open) or self._control_center_animating:
             return
         log.info("Close control center")
-        self.control_center.setVisible(False)
-        self._set_app_paused(False)
-        self._control_center_open = False
-        self._sync_overlay_z_order()
+        self._animate_control_center_close()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2309,6 +2454,7 @@ class Deletescape(QMainWindow):
 
         try:
             self._content_stack.setCurrentWidget(running.widget)
+            self._play_content_transition()
         except Exception:
             pass
 

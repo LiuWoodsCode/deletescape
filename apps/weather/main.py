@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import importlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +29,19 @@ DEFAULT_LON = -74.0060
 
 
 SEP = " \u2022 "
+
+
+def _ensure_vendor_paths() -> None:
+    # Allow importing vendored weather dependency from apps/weather/nws-ez.
+    vendor_root = Path(__file__).resolve().parent / "nws-ez"
+    if not vendor_root.is_dir():
+        return
+    vendor_path = str(vendor_root)
+    if vendor_path not in sys.path:
+        sys.path.insert(0, vendor_path)
+
+
+_ensure_vendor_paths()
 
 
 @dataclass
@@ -171,7 +186,8 @@ class _FetchWorker(QObject):
 
     def run(self) -> None:
         try:
-            from nws_ez import NWSClient
+            module = importlib.import_module("nws_ez")
+            NWSClient = getattr(module, "NWSClient")
 
             ua = self._ua.strip() or os.environ.get("NWS_USER_AGENT", "").strip()
             if not ua:
@@ -555,7 +571,7 @@ class App:
         self._cond_label.setText("Refresh failed")
 
         try:
-            self.window.notify(title="Weather", message=str(message or "Error"), duration_ms=3500, app_id=weather)
+            self.window.notify(title="Weather", message=str(message or "Error"), duration_ms=3500, app_id="weather")
         except Exception:
             pass
 

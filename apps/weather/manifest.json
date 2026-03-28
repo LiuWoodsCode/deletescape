@@ -4,5 +4,8 @@
   "version": "0.1.0",
   "build": 1,
   "icon": "Assets/icon.png",
-  "permissions": []
+  "permissions": [],
+  "launch": {
+    "recieveCustomQSS": true
+  }
 }

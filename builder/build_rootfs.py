@@ -497,6 +497,10 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
         if wallpapers_dir.exists():
             add_component("wallpapers.zip", [Path("assets") / "wallpaper"])
 
+        inclus_font_dir = staged_root / "assets" / "fonts"
+        if inclus_font_dir.exists():
+            add_component("fonts.zip", [Path("assets") / "fonts"])
+            
         defaults_dir = staged_root / "defaults"
         if defaults_dir.exists():
             add_component("defaults.zip", [Path("defaults")])

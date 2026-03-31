@@ -103,10 +103,6 @@ class App(QObject):
         self._preview_pix = None
         self._clear_layout()
 
-        title = QLabel("Gallery")
-        title.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(title)
-
         photos = list_gallery_photos(self._dcim_dir)
         if not photos:
             empty = QLabel("No photos found. You can import pictures from a computer or take pictures in the Camera app.")

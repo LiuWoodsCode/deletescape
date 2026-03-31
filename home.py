@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QGraphicsPixmapItem,
     QGraphicsScene,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QTimer, QRectF, QRect, QObject, QThread, Signal, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap, QIcon
@@ -99,26 +100,80 @@ def blur_pixmap(pixmap: QPixmap, *, radius: float = 18.0) -> QPixmap:
         if pixmap is None or pixmap.isNull():
             return pixmap
 
-        w = max(1, int(pixmap.width()))
-        h = max(1, int(pixmap.height()))
+        # Normalize HiDPI captures to logical pixels so overlay sizing remains
+        # correct at display scaling factors above 100%.
+        dpr = 1.0
+        try:
+            dpr = float(pixmap.devicePixelRatio())
+        except Exception:
+            dpr = 1.0
+        if dpr <= 0.0:
+            dpr = 1.0
+
+        w = max(1, int(round(float(pixmap.width()) / dpr)))
+        h = max(1, int(round(float(pixmap.height()) / dpr)))
+
+        source = pixmap
+        if dpr != 1.0:
+            source = pixmap.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            try:
+                source.setDevicePixelRatio(1.0)
+            except Exception:
+                pass
+
+        # Pad with edge pixels before blur so the blur kernel does not fade to
+        # transparent at the bounds (which causes soft corners / bleed-through).
+        pad = max(2, int(round(float(radius) * 2.0)))
+        padded_w = w + (pad * 2)
+        padded_h = h + (pad * 2)
+
+        padded = QPixmap(padded_w, padded_h)
+        padded.fill(Qt.transparent)
+        pad_painter = QPainter(padded)
+        pad_painter.setRenderHint(QPainter.Antialiasing, False)
+        pad_painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # Center image.
+        pad_painter.drawPixmap(pad, pad, source)
+        # Replicate edges.
+        pad_painter.drawPixmap(QRect(pad, 0, w, pad), source, QRect(0, 0, w, 1))
+        pad_painter.drawPixmap(QRect(pad, pad + h, w, pad), source, QRect(0, h - 1, w, 1))
+        pad_painter.drawPixmap(QRect(0, pad, pad, h), source, QRect(0, 0, 1, h))
+        pad_painter.drawPixmap(QRect(pad + w, pad, pad, h), source, QRect(w - 1, 0, 1, h))
+        # Replicate corners.
+        pad_painter.drawPixmap(QRect(0, 0, pad, pad), source, QRect(0, 0, 1, 1))
+        pad_painter.drawPixmap(QRect(pad + w, 0, pad, pad), source, QRect(w - 1, 0, 1, 1))
+        pad_painter.drawPixmap(QRect(0, pad + h, pad, pad), source, QRect(0, h - 1, 1, 1))
+        pad_painter.drawPixmap(QRect(pad + w, pad + h, pad, pad), source, QRect(w - 1, h - 1, 1, 1))
+        pad_painter.end()
 
         scene = QGraphicsScene()
-        item = QGraphicsPixmapItem(pixmap)
+        item = QGraphicsPixmapItem(padded)
         effect = QGraphicsBlurEffect()
         effect.setBlurRadius(float(radius))
         item.setGraphicsEffect(effect)
         scene.addItem(item)
 
-        img = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+        img = QImage(padded_w, padded_h, QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
 
         painter = QPainter(img)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        scene.render(painter, QRectF(0.0, 0.0, float(w), float(h)), QRectF(0.0, 0.0, float(w), float(h)))
+        scene.render(
+            painter,
+            QRectF(0.0, 0.0, float(padded_w), float(padded_h)),
+            QRectF(0.0, 0.0, float(padded_w), float(padded_h)),
+        )
         painter.end()
 
         out = QPixmap.fromImage(img)
+        # Crop back to the original logical size after blur.
+        out = out.copy(QRect(pad, pad, w, h))
+        try:
+            out.setDevicePixelRatio(1.0)
+        except Exception:
+            pass
         return pixmap if out.isNull() else out
     except Exception:
         return pixmap
@@ -523,8 +578,8 @@ class NotificationCard(QFrame):
         self._message = QLabel(body)
         self._message.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._message.setWordWrap(True)
+        self._message.setStyleSheet("color: #b0b0b0; font-size: 11px;")
 
-        text_layout.addWidget(self._appid)
         text_layout.addWidget(self._title)
         text_layout.addWidget(self._message)
 
@@ -636,7 +691,21 @@ class ControlCenterOverlay(QWidget):
         notif_hdr.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         layout.addWidget(notif_hdr)
 
-        # --- Notification card ---
+        # --- Scrollable notifications area ---
+        notif_scroll = QScrollArea()
+        notif_scroll.setWidgetResizable(True)
+        notif_scroll.setObjectName("notifScroll")
+        notif_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        notif_scroll.setAttribute(Qt.WA_StyledBackground, False)
+        
+        # Container widget for notifications
+        notif_container = QWidget()
+        notif_container.setStyleSheet("background-color: transparent;")
+        notif_container_layout = QVBoxLayout(notif_container)
+        notif_container_layout.setContentsMargins(0, 0, 0, 0)
+        notif_container_layout.setSpacing(12)
+        
+        # Load and add notification cards
         try:
             with open("./userdata/Data/System/notifications.json", "r", encoding="utf-8") as f:
                 notifications = json.load(f)
@@ -653,12 +722,15 @@ class ControlCenterOverlay(QWidget):
                 body = notif.get("message", "")
 
                 notif_card = NotificationCard(appid, app_name, title, body, timestamp, icon)
-                layout.addWidget(notif_card)
+                notif_container_layout.addWidget(notif_card)
         except FileNotFoundError:
             pass
 
-        # Push content up (big empty area below like your sketch)
-        layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        # Add stretch to push notifications to the top of the scroll area
+        notif_container_layout.addStretch()
+        
+        notif_scroll.setWidget(notif_container)
+        layout.addWidget(notif_scroll, 1)  # Give it proportional space
 
         # Optional close button (your original had it; mockup didn’t)
         close_btn = QPushButton("Close")
@@ -699,6 +771,33 @@ class ControlCenterOverlay(QWidget):
             QPushButton#closeBtn {
                 margin-top: 10px;
                 padding: 10px 14px;
+            }
+
+            QScrollBar:vertical {
+                width: 8px;
+                background-color: transparent;
+            }
+
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background-color: #777777;
+            }
+
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                border: none;
+                background: none;
+            }
+
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-line:vertical {
+                border: none;
+                background: none;
             }
         """)
 

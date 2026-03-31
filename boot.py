@@ -10,7 +10,7 @@ import time
 import traceback
 from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
-from PySide6.QtGui import QMovie
+from PySide6.QtGui import QMovie, QFont
 import requests
 from home import Deletescape
 
@@ -25,6 +25,11 @@ from logger import get_logger, install_qt_message_handler
 from wallpaper import load_pixmap, scale_crop_center
 
 import socket
+
+try:
+    from PySide6.QtGui import QFontDatabase
+except Exception:
+    QFontDatabase = None
 
 def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
     """
@@ -322,6 +327,47 @@ def _render_splash(label: QLabel, *, image_path: Path) -> bool:
         return False
 
 
+def _configure_default_app_font(*, base_dir: Path, app: QApplication, log) -> None:
+    """Prefer bundled Inclusive Sans fonts when available.
+
+    If no bundled fonts can be loaded, keep Qt's current default font.
+    """
+    if QFontDatabase is None:
+        log.warning("QFontDatabase unavailable; keeping default font")
+        return
+
+    fonts_dir = base_dir / "assets" / "fonts" / "InclusiveSans"
+    if not fonts_dir.exists() or not fonts_dir.is_dir():
+        log.info("InclusiveSans font directory not found; keeping default font", extra={"path": str(fonts_dir)})
+        return
+
+    loaded_families = []
+    font_paths = sorted(fonts_dir.glob("*.ttf"))
+    for font_path in font_paths:
+        try:
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id < 0:
+                log.warning("Failed to load app font", extra={"path": str(font_path)})
+                continue
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            loaded_families.extend([f for f in families if f])
+        except Exception:
+            log.exception("Exception while loading app font", extra={"path": str(font_path)})
+
+    if not loaded_families:
+        log.info("No InclusiveSans fonts loaded; keeping default font", extra={"path": str(fonts_dir)})
+        return
+
+    # Prefer the expected family name when available.
+    family = next((f for f in loaded_families if str(f).strip().lower() in {"inclusive sans", "inclusivesans"}), loaded_families[0])
+
+    current_font = app.font()
+    app_font = QFont(current_font)
+    app_font.setFamily(family)
+    app.setFont(app_font)
+    log.info("Applied bundled default app font", extra={"family": family, "fonts_loaded": len(set(loaded_families))})
+
+
 
 import argparse
 
@@ -419,6 +465,7 @@ def main():
     # system virtual keyboard plugin.
 
     app = QApplication(sys.argv)
+    _configure_default_app_font(base_dir=base_dir, app=app, log=log)
     os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
     os_instance.show()
 

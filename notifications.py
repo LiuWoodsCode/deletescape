@@ -154,7 +154,9 @@ class NotificationBanner(QFrame):
                     self._on_click()
             except Exception:
                 pass
-            self.setVisible(False)
+            # Let NotificationCenter handle hide behavior so animations run.
+            if self._on_click is None:
+                self.setVisible(False)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -179,12 +181,39 @@ class NotificationCenter:
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._hide_and_maybe_next)
 
+        self._target_rect = QRect()
+        self._is_hiding = False
+        self._show_anim = QPropertyAnimation(self._banner, b"geometry", self._banner)
+        self._show_anim.setDuration(220)
+        self._show_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._hide_anim = QPropertyAnimation(self._banner, b"geometry", self._banner)
+        self._hide_anim.setDuration(180)
+        self._hide_anim.setEasingCurve(QEasingCurve.InCubic)
+        self._hide_anim.finished.connect(self._on_hide_animation_finished)
+
+    def _hidden_rect(self) -> QRect:
+        r = QRect(self._target_rect)
+        if r.isNull():
+            return QRect(self._banner.geometry())
+        r.moveTop(r.top() - r.height() - 4)
+        return r
+
     def set_geometry(self, *, x: int, y: int, width: int) -> None:
         # Full-width banner with small side margins.
         margin = 8
         w = max(1, int(width) - margin * 2)
         h = max(1, self._banner_height_px)
-        self._banner.setGeometry(int(x) + margin, int(y) + margin, w, h - margin)
+        self._target_rect = QRect(int(x) + margin, int(y) + margin, w, h - margin)
+
+        if self._is_hiding:
+            self._hide_anim.setEndValue(self._hidden_rect())
+            return
+
+        if self._banner.isVisible():
+            self._banner.setGeometry(self._target_rect)
+            return
+
+        self._banner.setGeometry(self._hidden_rect())
 
     def _find_app_by_id(self, app_id: str):
             """Return the first app matching app_id, else None."""
@@ -276,7 +305,7 @@ class NotificationCenter:
             log.exception("Failed to refresh banner theme")
             pass
 
-        if self._banner.isVisible():
+        if self._banner.isVisible() or self._is_hiding:
             self._queue.append(n)
             log.debug("Notification queued", extra={"queue_len": len(self._queue)})
             return
@@ -330,7 +359,20 @@ class NotificationCenter:
         except Exception:
             pass
 
+        self._is_hiding = False
+        try:
+            self._hide_anim.stop()
+        except Exception:
+            pass
+
+        start_rect = self._hidden_rect()
+        end_rect = QRect(self._target_rect if not self._target_rect.isNull() else self._banner.geometry())
+        self._banner.setGeometry(start_rect)
         self._banner.setVisible(True)
+        self._show_anim.stop()
+        self._show_anim.setStartValue(start_rect)
+        self._show_anim.setEndValue(end_rect)
+        self._show_anim.start()
 
         log.debug(
             "Notification shown",
@@ -346,13 +388,36 @@ class NotificationCenter:
         self._hide_timer.start(n.duration_ms)
 
     def _hide_and_maybe_next(self) -> None:
+        if self._is_hiding:
+            return
+
         if self._active is not None:
             log.debug(
                 "Notification hide",
                 extra={"app_id": self._active.app_id, "queue_len": len(self._queue)},
             )
+
+        try:
+            if self._hide_timer.isActive():
+                self._hide_timer.stop()
+        except Exception:
+            pass
+
+        if not self._banner.isVisible():
+            self._on_hide_animation_finished()
+            return
+
+        self._is_hiding = True
+        self._show_anim.stop()
+        self._hide_anim.stop()
+        self._hide_anim.setStartValue(self._banner.geometry())
+        self._hide_anim.setEndValue(self._hidden_rect())
+        self._hide_anim.start()
+
+    def _on_hide_animation_finished(self) -> None:
         self._banner.setVisible(False)
         self._active = None
+        self._is_hiding = False
 
         if not self._queue:
             return

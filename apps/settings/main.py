@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import shutil
 import sys
 from pathlib import Path
 from dataclasses import dataclass
@@ -36,7 +37,10 @@ from PySide6.QtWidgets import (
 )
 
 from battery import get_battery_info
+from app_registry import AppDescriptor, discover_apps
 from config import DeviceConfigStore, OSBuildConfigStore
+from fs_layout import get_user_data_layout
+from logger import get_logger
 from wifi import (
     get_wifi_info,
     scan_wifi_networks,
@@ -44,6 +48,9 @@ from wifi import (
     add_wifi_profile,
     delete_wifi_profile,
 )
+
+
+log = get_logger("settings")
 
 # --------- theme helpers ---------
 
@@ -681,6 +688,7 @@ class SettingsWindow(QMainWindow):
         system_pages = [
             ("system.display", "Display", "Brightness and auto-brightness", None),
             ("system.audio", "Audio", "Volume and vibration", None),
+            ("system.applications", "Applications", "Manage user-installed apps", None),
             ("system.developer", "Developer options", "Debug and rendering toggles", None),
             ("system.battery", "Battery", "Battery status and metrics", None),
             ("system.battery_health", "Battery health", "Capacity and cycle count", None),
@@ -744,6 +752,7 @@ class SettingsWindow(QMainWindow):
         # System pages
         self._add_page("system.display", self._make_system_display())
         self._add_page("system.audio", self._make_system_audio())
+        self._add_page("system.applications", self._make_system_applications())
         self._add_page("system.developer", self._make_system_developer())
         self._add_page("system.battery", self._make_system_battery())
         self._add_page("system.battery_health", self._make_system_battery_health())
@@ -1231,6 +1240,230 @@ class SettingsWindow(QMainWindow):
 
         refresh_labels()
         root.addWidget(content, 1)
+        return page
+
+    def _user_data_layout(self):
+        base_dir = Path(__file__).resolve().parents[2]
+        return get_user_data_layout(base_dir)
+
+    def _clear_layout_widgets(self, layout: QVBoxLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.deleteLater()
+            elif child_layout is not None:
+                self._clear_layout_widgets(child_layout)
+
+    def _notify(self, title: str, message: str, duration_ms: int = 2200) -> None:
+        try:
+            if self.host_window is not None and hasattr(self.host_window, "notify"):
+                self.host_window.notify(title=str(title), message=str(message), duration_ms=int(duration_ms))
+        except Exception:
+            pass
+
+    def _refresh_host_app_registry(self) -> None:
+        try:
+            loader = getattr(self.host_window, "load_apps", None) if self.host_window is not None else None
+            if callable(loader):
+                self.host_window.apps = loader()
+        except Exception:
+            log.exception("Failed to refresh app registry from Settings")
+
+    def _list_user_installed_apps(self) -> list[AppDescriptor]:
+        layout = self._user_data_layout()
+        layout.ensure_directories()
+        apps = discover_apps(layout.applications)
+        return sorted(
+            apps.values(),
+            key=lambda desc: ((desc.display_name or desc.app_id or "").lower(), desc.app_id.lower()),
+        )
+
+    def _make_system_applications(self) -> QWidget:
+        page = QWidget()
+        root = QVBoxLayout(page)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        header = HeaderBar("Applications", show_back=True, left_icon=None)
+        header.backClicked.connect(lambda: self._go("section.system"))
+        root.addWidget(header)
+
+        stack = QStackedWidget()
+        root.addWidget(stack, 1)
+
+        list_page = QWidget()
+        l = QVBoxLayout(list_page)
+        l.setContentsMargins(16, 12, 16, 16)
+        l.setSpacing(10)
+
+        intro = QLabel("Manage user-installed applications.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {qcolor_css(TEXT)}; font-size: 14px;")
+        l.addWidget(intro)
+
+        status_label = QLabel("")
+        status_label.setWordWrap(True)
+        status_label.setStyleSheet(f"color: {qcolor_css(MUTED)}; font-size: 12px;")
+        l.addWidget(status_label)
+
+        refresh_btn = self._make_button("Refresh")
+        l.addWidget(refresh_btn)
+
+        apps_wrap = QWidget()
+        apps_layout = QVBoxLayout(apps_wrap)
+        apps_layout.setContentsMargins(0, 0, 0, 0)
+        apps_layout.setSpacing(0)
+        l.addWidget(apps_wrap)
+        l.addStretch(1)
+
+        detail_page = QWidget()
+        d = QVBoxLayout(detail_page)
+        d.setContentsMargins(16, 12, 16, 16)
+        d.setSpacing(10)
+
+        def _uninstall_app(desc: AppDescriptor) -> None:
+            layout = self._user_data_layout()
+            app_id = str(desc.app_id)
+
+            try:
+                terminate = getattr(self.host_window, "_terminate_app", None) if self.host_window is not None else None
+                running_apps = getattr(self.host_window, "_running_apps", {}) if self.host_window is not None else {}
+                if callable(terminate) and app_id in running_apps:
+                    terminate(app_id)
+            except Exception:
+                log.exception("Failed to terminate app before uninstall", extra={"app_id": app_id})
+
+            removed_any = False
+            app_dir = layout.applications / app_id
+            app_data_dir = layout.app_data_dir(app_id)
+
+            try:
+                if app_dir.exists():
+                    shutil.rmtree(app_dir)
+                    removed_any = True
+            except Exception:
+                log.exception("Failed to remove user app directory", extra={"app_id": app_id, "path": str(app_dir)})
+                self._notify("Applications", f"Could not remove {desc.display_name or app_id}.")
+                return
+
+            try:
+                if app_data_dir.exists():
+                    shutil.rmtree(app_data_dir)
+                    removed_any = True
+            except Exception:
+                log.exception("Failed to remove app data directory", extra={"app_id": app_id, "path": str(app_data_dir)})
+                self._notify("Applications", f"Removed app files for {desc.display_name or app_id}, but kept app data.")
+
+            self._refresh_host_app_registry()
+            _refresh_apps(message=f"Removed {desc.display_name or app_id}.")
+            stack.setCurrentWidget(list_page)
+            if removed_any:
+                self._notify("Applications", f"Uninstalled {desc.display_name or app_id}.")
+            else:
+                self._notify("Applications", f"{desc.display_name or app_id} was already removed.")
+
+        def _open_detail(desc: AppDescriptor) -> None:
+            self._clear_layout_widgets(d)
+
+            title = QLabel(desc.display_name or desc.app_id)
+            title.setWordWrap(True)
+            title.setStyleSheet(f"color: {qcolor_css(TEXT)}; font-size: 20px; font-weight: 600;")
+            d.addWidget(title)
+
+            subtitle = QLabel("User-installed application")
+            subtitle.setStyleSheet(f"color: {qcolor_css(MUTED)}; font-size: 12px;")
+            d.addWidget(subtitle)
+
+            app_data_dir = self._user_data_layout().app_data_dir(desc.app_id)
+            self._add_info_rows(d, [
+                ("App ID", desc.app_id),
+                ("Version", desc.version or "unknown"),
+                ("Build", str(desc.build) if desc.build is not None else "unknown"),
+                ("Bundle ID", desc.bundle_id or "unknown"),
+                ("Storage", "Has local app data" if app_data_dir.exists() else "No local app data"),
+                ("Location", str(desc.folder)),
+            ])
+
+            warning = QLabel("Uninstalling removes the app package and its local application data.")
+            warning.setWordWrap(True)
+            warning.setStyleSheet(f"color: {qcolor_css(MUTED)}; font-size: 12px;")
+            d.addWidget(warning)
+
+            confirm_label = QLabel("")
+            confirm_label.setWordWrap(True)
+            confirm_label.setStyleSheet(f"color: {qcolor_css(TEXT)}; font-size: 13px;")
+            confirm_label.hide()
+            d.addWidget(confirm_label)
+
+            uninstall_btn = self._make_button("Uninstall")
+            confirm_btn = self._make_button("Confirm uninstall")
+            cancel_btn = self._make_button("Cancel")
+            confirm_btn.hide()
+            cancel_btn.hide()
+
+            def _begin_confirm() -> None:
+                confirm_label.setText("This permanently deletes the application and its saved data on this device.")
+                confirm_label.show()
+                uninstall_btn.hide()
+                confirm_btn.show()
+                cancel_btn.show()
+
+            def _cancel_confirm() -> None:
+                confirm_label.hide()
+                uninstall_btn.show()
+                confirm_btn.hide()
+                cancel_btn.hide()
+
+            uninstall_btn.clicked.connect(_begin_confirm)
+            confirm_btn.clicked.connect(lambda: _uninstall_app(desc))
+            cancel_btn.clicked.connect(_cancel_confirm)
+
+            d.addWidget(uninstall_btn)
+            d.addWidget(confirm_btn)
+            d.addWidget(cancel_btn)
+            d.addWidget(self._make_button("Back", lambda: stack.setCurrentWidget(list_page)))
+            d.addStretch(1)
+            stack.setCurrentWidget(detail_page)
+
+        def _refresh_apps(message: str | None = None) -> None:
+            self._clear_layout_widgets(apps_layout)
+            apps = self._list_user_installed_apps()
+            if message:
+                status_label.setText(message)
+            elif not apps:
+                status_label.setText("No user applications are installed.")
+            elif len(apps) == 1:
+                status_label.setText("1 user application installed.")
+            else:
+                status_label.setText(f"{len(apps)} user applications installed.")
+
+            if not apps:
+                empty = QLabel("No user-installed apps found.")
+                empty.setWordWrap(True)
+                empty.setStyleSheet(f"color: {qcolor_css(TEXT)}; font-size: 14px;")
+                apps_layout.addWidget(empty)
+                return
+
+            for desc in apps:
+                parts = [desc.app_id]
+                if desc.version:
+                    parts.append(f"Version {desc.version}")
+                if desc.build is not None:
+                    parts.append(f"Build {desc.build}")
+                row = NavRowItem(desc.display_name or desc.app_id, " • ".join(parts), None)
+                row.clicked.connect(lambda d=desc: _open_detail(d))
+                apps_layout.addWidget(row)
+                apps_layout.addWidget(Divider())
+
+            apps_layout.addStretch(1)
+
+        refresh_btn.clicked.connect(lambda: _refresh_apps())
+        _refresh_apps()
+
+        stack.addWidget(list_page)
+        stack.addWidget(detail_page)
         return page
 
     def _make_system_display(self) -> QWidget:

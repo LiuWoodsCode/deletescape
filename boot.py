@@ -10,7 +10,7 @@ import time
 import traceback
 from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
-from PySide6.QtGui import QMovie
+from PySide6.QtGui import QMovie, QFont
 import requests
 from home import Deletescape
 
@@ -27,6 +27,23 @@ from wallpaper import load_pixmap, scale_crop_center
 
 import socket
 
+try:
+    from PySide6.QtGui import QFontDatabase
+except Exception:
+    QFontDatabase = None
+
+def _resolve_splash_asset(path: Path) -> Path:
+    """Return the on-disk asset path even when filename casing differs."""
+    if path.exists():
+        return path
+    try:
+        for candidate in path.parent.iterdir():
+            if candidate.is_file() and candidate.name.lower() == path.name.lower():
+                return candidate
+    except FileNotFoundError:
+        pass
+    return path
+
 def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
     """
     Returns the correct splash asset for the current orientation.
@@ -39,8 +56,9 @@ def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
         bootinternal_wide.png
         recovery_wide.png
     """
+    base_path = _resolve_splash_asset(base_path)
     if target_size.width() > target_size.height():
-        wide = base_path.with_name(base_path.stem + "_wide" + base_path.suffix)
+        wide = _resolve_splash_asset(base_path.with_name(base_path.stem + "_wide" + base_path.suffix))
         # Prefer a landscape-specific asset when available.
         if wide.exists():
             return wide
@@ -91,12 +109,13 @@ class RecoveryWindow(QMainWindow):
         self._debug_label.setWordWrap(True)
 
         self._debug_label.setStyleSheet("""
-            QLabel {
-                background-color: rgba(0,0,0,100);
-                color: #FFFFFF;
-                font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
-                font-size: 13px;
-            }
+        QLabel {
+            color: #FFFFFF;
+            background-color: rgba(0, 0, 0, 255);
+            padding: 8px 8px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
+            font-size: 13px;
+        }
         """)
 
         self._debug_label.raise_()
@@ -329,6 +348,47 @@ def _render_splash(label: QLabel, *, image_path: Path) -> bool:
         return False
 
 
+def _configure_default_app_font(*, base_dir: Path, app: QApplication, log) -> None:
+    """Prefer bundled Inclusive Sans fonts when available.
+
+    If no bundled fonts can be loaded, keep Qt's current default font.
+    """
+    if QFontDatabase is None:
+        log.warning("QFontDatabase unavailable; keeping default font")
+        return
+
+    fonts_dir = base_dir / "assets" / "fonts" / "InclusiveSans"
+    if not fonts_dir.exists() or not fonts_dir.is_dir():
+        log.info("InclusiveSans font directory not found; keeping default font", extra={"path": str(fonts_dir)})
+        return
+
+    loaded_families = []
+    font_paths = sorted(fonts_dir.glob("*.ttf"))
+    for font_path in font_paths:
+        try:
+            font_id = QFontDatabase.addApplicationFont(str(font_path))
+            if font_id < 0:
+                log.warning("Failed to load app font", extra={"path": str(font_path)})
+                continue
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            loaded_families.extend([f for f in families if f])
+        except Exception:
+            log.exception("Exception while loading app font", extra={"path": str(font_path)})
+
+    if not loaded_families:
+        log.info("No InclusiveSans fonts loaded; keeping default font", extra={"path": str(fonts_dir)})
+        return
+
+    # Prefer the expected family name when available.
+    family = next((f for f in loaded_families if str(f).strip().lower() in {"inclusive sans", "inclusivesans"}), loaded_families[0])
+
+    current_font = app.font()
+    app_font = QFont(current_font)
+    app_font.setFamily(family)
+    app.setFont(app_font)
+    log.info("Applied bundled default app font", extra={"family": family, "fonts_loaded": len(set(loaded_families))})
+
+
 
 import argparse
 
@@ -436,6 +496,7 @@ def main():
     # system virtual keyboard plugin.
 
     app = QApplication(sys.argv)
+    _configure_default_app_font(base_dir=base_dir, app=app, log=log)
     os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
@@ -592,12 +653,7 @@ def main():
                 msg = f"init check failure: {reason}"
                 self._log.error(msg)
                 self._log.info("Device is now in recovery mode.")
-                details = dict(details or {})
-                if self._kangel_manager.is_running():
-                    details["kangel"] = self._kangel_manager.status_snapshot()
-                self._kangel_manager.attach_host_window(None)
-                self._kangel_manager.set_recovery_info(details)
-                recovery_img = self._splash_dir / "recovery.png"
+                recovery_img = _resolve_splash_asset(self._splash_dir / "recovery.png")
                 try:
                     self._app.setQuitOnLastWindowClosed(False)
                     self._os_instance.hide()

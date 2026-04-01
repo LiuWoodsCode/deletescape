@@ -14,10 +14,6 @@ class App:
         layout.setSpacing(12)
         container.setLayout(layout)
 
-        title = QLabel("Notification Tester")
-        title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-
         info = QLabel(
             "These buttons should show banner notifications just below the status bar.\n"
             "Try pressing multiple buttons quickly to verify queuing."

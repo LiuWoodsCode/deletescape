@@ -26,6 +26,7 @@ from wifi import (
 from config import ConfigStore, OSBuildConfigStore, OSConfig, DeviceConfigStore, DeviceConfig
 from fs_layout import get_user_data_layout
 from app_registry import AppDescriptor, discover_apps, load_app_class, unload_app_modules
+from dsui_qss_gen import DARK_PALETTE, LIGHT_PALETTE, generate_qt_stylesheet
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,10 +43,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QGraphicsBlurEffect,
+    QGraphicsOpacityEffect,
     QGraphicsPixmapItem,
     QGraphicsScene,
+    QScrollArea,
 )
-from PySide6.QtCore import Qt, QTimer, QRectF, QObject, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QRectF, QRect, QObject, QThread, Signal, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap, QIcon
 
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -97,26 +100,80 @@ def blur_pixmap(pixmap: QPixmap, *, radius: float = 18.0) -> QPixmap:
         if pixmap is None or pixmap.isNull():
             return pixmap
 
-        w = max(1, int(pixmap.width()))
-        h = max(1, int(pixmap.height()))
+        # Normalize HiDPI captures to logical pixels so overlay sizing remains
+        # correct at display scaling factors above 100%.
+        dpr = 1.0
+        try:
+            dpr = float(pixmap.devicePixelRatio())
+        except Exception:
+            dpr = 1.0
+        if dpr <= 0.0:
+            dpr = 1.0
+
+        w = max(1, int(round(float(pixmap.width()) / dpr)))
+        h = max(1, int(round(float(pixmap.height()) / dpr)))
+
+        source = pixmap
+        if dpr != 1.0:
+            source = pixmap.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            try:
+                source.setDevicePixelRatio(1.0)
+            except Exception:
+                pass
+
+        # Pad with edge pixels before blur so the blur kernel does not fade to
+        # transparent at the bounds (which causes soft corners / bleed-through).
+        pad = max(2, int(round(float(radius) * 2.0)))
+        padded_w = w + (pad * 2)
+        padded_h = h + (pad * 2)
+
+        padded = QPixmap(padded_w, padded_h)
+        padded.fill(Qt.transparent)
+        pad_painter = QPainter(padded)
+        pad_painter.setRenderHint(QPainter.Antialiasing, False)
+        pad_painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # Center image.
+        pad_painter.drawPixmap(pad, pad, source)
+        # Replicate edges.
+        pad_painter.drawPixmap(QRect(pad, 0, w, pad), source, QRect(0, 0, w, 1))
+        pad_painter.drawPixmap(QRect(pad, pad + h, w, pad), source, QRect(0, h - 1, w, 1))
+        pad_painter.drawPixmap(QRect(0, pad, pad, h), source, QRect(0, 0, 1, h))
+        pad_painter.drawPixmap(QRect(pad + w, pad, pad, h), source, QRect(w - 1, 0, 1, h))
+        # Replicate corners.
+        pad_painter.drawPixmap(QRect(0, 0, pad, pad), source, QRect(0, 0, 1, 1))
+        pad_painter.drawPixmap(QRect(pad + w, 0, pad, pad), source, QRect(w - 1, 0, 1, 1))
+        pad_painter.drawPixmap(QRect(0, pad + h, pad, pad), source, QRect(0, h - 1, 1, 1))
+        pad_painter.drawPixmap(QRect(pad + w, pad + h, pad, pad), source, QRect(w - 1, h - 1, 1, 1))
+        pad_painter.end()
 
         scene = QGraphicsScene()
-        item = QGraphicsPixmapItem(pixmap)
+        item = QGraphicsPixmapItem(padded)
         effect = QGraphicsBlurEffect()
         effect.setBlurRadius(float(radius))
         item.setGraphicsEffect(effect)
         scene.addItem(item)
 
-        img = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+        img = QImage(padded_w, padded_h, QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
 
         painter = QPainter(img)
         painter.setRenderHint(QPainter.Antialiasing, False)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-        scene.render(painter, QRectF(0.0, 0.0, float(w), float(h)), QRectF(0.0, 0.0, float(w), float(h)))
+        scene.render(
+            painter,
+            QRectF(0.0, 0.0, float(padded_w), float(padded_h)),
+            QRectF(0.0, 0.0, float(padded_w), float(padded_h)),
+        )
         painter.end()
 
         out = QPixmap.fromImage(img)
+        # Crop back to the original logical size after blur.
+        out = out.copy(QRect(pad, pad, w, h))
+        try:
+            out.setDevicePixelRatio(1.0)
+        except Exception:
+            pass
         return pixmap if out.isNull() else out
     except Exception:
         return pixmap
@@ -521,8 +578,8 @@ class NotificationCard(QFrame):
         self._message = QLabel(body)
         self._message.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._message.setWordWrap(True)
+        self._message.setStyleSheet("color: #b0b0b0; font-size: 11px;")
 
-        text_layout.addWidget(self._appid)
         text_layout.addWidget(self._title)
         text_layout.addWidget(self._message)
 
@@ -634,7 +691,21 @@ class ControlCenterOverlay(QWidget):
         notif_hdr.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         layout.addWidget(notif_hdr)
 
-        # --- Notification card ---
+        # --- Scrollable notifications area ---
+        notif_scroll = QScrollArea()
+        notif_scroll.setWidgetResizable(True)
+        notif_scroll.setObjectName("notifScroll")
+        notif_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        notif_scroll.setAttribute(Qt.WA_StyledBackground, False)
+        
+        # Container widget for notifications
+        notif_container = QWidget()
+        notif_container.setStyleSheet("background-color: transparent;")
+        notif_container_layout = QVBoxLayout(notif_container)
+        notif_container_layout.setContentsMargins(0, 0, 0, 0)
+        notif_container_layout.setSpacing(12)
+        
+        # Load and add notification cards
         try:
             with open("./userdata/Data/System/notifications.json", "r", encoding="utf-8") as f:
                 notifications = json.load(f)
@@ -651,12 +722,15 @@ class ControlCenterOverlay(QWidget):
                 body = notif.get("message", "")
 
                 notif_card = NotificationCard(appid, app_name, title, body, timestamp, icon)
-                layout.addWidget(notif_card)
+                notif_container_layout.addWidget(notif_card)
         except FileNotFoundError:
             pass
 
-        # Push content up (big empty area below like your sketch)
-        layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        # Add stretch to push notifications to the top of the scroll area
+        notif_container_layout.addStretch()
+        
+        notif_scroll.setWidget(notif_container)
+        layout.addWidget(notif_scroll, 1)  # Give it proportional space
 
         # Optional close button (your original had it; mockup didn’t)
         close_btn = QPushButton("Close")
@@ -697,6 +771,33 @@ class ControlCenterOverlay(QWidget):
             QPushButton#closeBtn {
                 margin-top: 10px;
                 padding: 10px 14px;
+            }
+
+            QScrollBar:vertical {
+                width: 8px;
+                background-color: transparent;
+            }
+
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+
+            QScrollBar::handle:vertical:hover {
+                background-color: #777777;
+            }
+
+            QScrollBar::up-arrow:vertical,
+            QScrollBar::down-arrow:vertical {
+                border: none;
+                background: none;
+            }
+
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-line:vertical {
+                border: none;
+                background: none;
             }
         """)
 
@@ -960,6 +1061,7 @@ class Deletescape(QMainWindow):
         self.active_app = None
         self.active_app_id: str | None = None
         self._control_center_open = False
+        self._control_center_animating = False
         self._handling_crash = False
         self._locked = True
         self._has_unlocked_once = False
@@ -991,6 +1093,17 @@ class Deletescape(QMainWindow):
         self._content_stack.setContentsMargins(0, 0, 0, 0)
         self._content_stack.setSpacing(0)
         self.content_host.setLayout(self._content_stack)
+        self._content_opacity = QGraphicsOpacityEffect(self.content_host)
+        self._content_opacity.setOpacity(1.0)
+        self.content_host.setGraphicsEffect(self._content_opacity)
+        self._content_fade_anim = QPropertyAnimation(self._content_opacity, b"opacity", self)
+        self._content_fade_anim.setDuration(180)
+        self._content_fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._control_center_opacity = QGraphicsOpacityEffect(self.control_center if hasattr(self, 'control_center') else self.root)
+        self._control_center_anim = QPropertyAnimation(self.control_center if hasattr(self, 'control_center') else self.root, b"geometry", self)
+        self._control_center_opacity_anim = QPropertyAnimation(self._control_center_opacity, b"opacity", self)
+
         root_layout.addWidget(self.content_host)
 
         if not embed:
@@ -1001,7 +1114,21 @@ class Deletescape(QMainWindow):
 
         # Overlay rendered inside the main window.
         self.control_center = ControlCenterOverlay(window=self, parent=self.root)
+        self.control_center.setGraphicsEffect(self._control_center_opacity)
+        self._control_center_opacity.setOpacity(0.0)
+        self._control_center_anim = QPropertyAnimation(self.control_center, b"geometry", self)
+        self._control_center_anim.setDuration(260)
+        self._control_center_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._control_center_opacity_anim = QPropertyAnimation(self._control_center_opacity, b"opacity", self)
+        self._control_center_opacity_anim.setDuration(220)
+        self._control_center_opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.lock_screen = LockScreenOverlay(window=self, parent=self.root)
+        self._lock_opacity = QGraphicsOpacityEffect(self.lock_screen)
+        self._lock_opacity.setOpacity(0.0)
+        self.lock_screen.setGraphicsEffect(self._lock_opacity)
+        self._lock_fade_anim = QPropertyAnimation(self._lock_opacity, b"opacity", self)
+        self._lock_fade_anim.setDuration(220)
+        self._lock_fade_anim.setEasingCurve(QEasingCurve.OutCubic)
 
         # Notification overlay sits below the status bar.
         self.notifications = NotificationCenter(
@@ -1273,6 +1400,22 @@ class Deletescape(QMainWindow):
         # Notify the active app (e.g., Home) if it wants to update its background.
         self._call_active_app_hook('on_wallpaper_changed')
 
+    def _build_custom_app_qss(self) -> str:
+        dark_mode = bool(getattr(self.config, "dark_mode", False))
+        theme = DARK_PALETTE if dark_mode else LIGHT_PALETTE
+        return generate_qt_stylesheet(theme=theme)
+
+    def _refresh_custom_qss_apps(self) -> None:
+        stylesheet = self._build_custom_app_qss()
+        for app_id, running in list(self._running_apps.items()):
+            desc = self.apps.get(app_id)
+            if desc is None or not bool(getattr(desc, "receive_custom_qss", False)):
+                continue
+            try:
+                running.widget.setStyleSheet(stylesheet)
+            except Exception:
+                log.exception("Failed to refresh custom app QSS", extra={"app_id": str(app_id)})
+
     def apply_theme(self):
         app = QApplication.instance()
         if app is None:
@@ -1336,6 +1479,11 @@ class Deletescape(QMainWindow):
                 app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
             else:
                 app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+
+        try:
+            self._refresh_custom_qss_apps()
+        except Exception:
+            log.exception("Failed to refresh custom QSS apps after theme change")
              
     # Helper to return apps that are not marked hidden
     def get_visible_apps(self):
@@ -1678,6 +1826,12 @@ class Deletescape(QMainWindow):
 
         app_widget = QWidget(self.content_host)
         self._content_stack.addWidget(app_widget)
+
+        if bool(getattr(desc, "receive_custom_qss", False)):
+            try:
+                app_widget.setStyleSheet(self._build_custom_app_qss())
+            except Exception:
+                log.exception("Failed to inject custom app QSS", extra={"app_id": str(app_id)})
 
         log.info("Instantiate app", extra={"app_id": str(app_id), "class": getattr(app_class, "__name__", str(app_class))})
 
@@ -2148,6 +2302,74 @@ class Deletescape(QMainWindow):
 
         self._sync_overlay_z_order()
 
+    def _play_content_transition(self) -> None:
+        try:
+            self._content_fade_anim.stop()
+            self._content_opacity.setOpacity(0.72)
+            self._content_fade_anim.setStartValue(0.72)
+            self._content_fade_anim.setEndValue(1.0)
+            self._content_fade_anim.start()
+        except Exception:
+            pass
+
+    def _control_center_rects(self) -> tuple[QRect, QRect]:
+        end_rect = QRect(self.root.rect())
+        start_rect = QRect(end_rect)
+        start_rect.moveTop(-end_rect.height())
+        return start_rect, end_rect
+
+    def _animate_control_center_open(self) -> None:
+        start_rect, end_rect = self._control_center_rects()
+        self._control_center_animating = True
+        self.control_center.setGeometry(start_rect)
+        self.control_center.setVisible(True)
+        self._sync_overlay_z_order()
+
+        try:
+            self._control_center_anim.stop()
+            self._control_center_opacity_anim.stop()
+        except Exception:
+            pass
+
+        self._control_center_opacity.setOpacity(0.0)
+        self._control_center_anim.setStartValue(start_rect)
+        self._control_center_anim.setEndValue(end_rect)
+        self._control_center_opacity_anim.setStartValue(0.0)
+        self._control_center_opacity_anim.setEndValue(1.0)
+        self._control_center_anim.start()
+        self._control_center_opacity_anim.start()
+
+        self._control_center_opacity_anim.finished.connect(self._finish_control_center_open, Qt.UniqueConnection)
+
+    def _finish_control_center_open(self) -> None:
+        self._control_center_animating = False
+
+    def _animate_control_center_close(self) -> None:
+        start_rect, end_rect = self._control_center_rects()
+        self._control_center_animating = True
+
+        try:
+            self._control_center_anim.stop()
+            self._control_center_opacity_anim.stop()
+        except Exception:
+            pass
+
+        self._control_center_anim.setStartValue(self.control_center.geometry())
+        self._control_center_anim.setEndValue(start_rect)
+        self._control_center_opacity_anim.setStartValue(float(self._control_center_opacity.opacity()))
+        self._control_center_opacity_anim.setEndValue(0.0)
+
+        def _finalize_close() -> None:
+            self.control_center.setVisible(False)
+            self._set_app_paused(False)
+            self._control_center_open = False
+            self._control_center_animating = False
+            self._sync_overlay_z_order()
+
+        self._control_center_opacity_anim.finished.connect(_finalize_close, Qt.SingleShotConnection)
+        self._control_center_anim.start()
+        self._control_center_opacity_anim.start()
+
     def _sync_overlay_z_order(self) -> None:
         """Ensure overlays stack correctly.
 
@@ -2189,8 +2411,34 @@ class Deletescape(QMainWindow):
         if not hasattr(self, 'lock_screen'):
             return
         self._sync_overlay_geometry()
-        self.lock_screen.setVisible(visible)
-        self._sync_overlay_z_order()
+        try:
+            self._lock_fade_anim.stop()
+        except Exception:
+            pass
+
+        if bool(visible):
+            self.lock_screen.setVisible(True)
+            self.lock_screen.raise_()
+            self._lock_opacity.setOpacity(0.0)
+            self._lock_fade_anim.setStartValue(0.0)
+            self._lock_fade_anim.setEndValue(1.0)
+            self._lock_fade_anim.start()
+            self._sync_overlay_z_order()
+            return
+
+        if not self.lock_screen.isVisible():
+            self._sync_overlay_z_order()
+            return
+
+        self._lock_fade_anim.setStartValue(float(self._lock_opacity.opacity()))
+        self._lock_fade_anim.setEndValue(0.0)
+
+        def _finish_unlock() -> None:
+            self.lock_screen.setVisible(False)
+            self._sync_overlay_z_order()
+
+        self._lock_fade_anim.finished.connect(_finish_unlock, Qt.SingleShotConnection)
+        self._lock_fade_anim.start()
 
     def is_locked(self) -> bool:
         return self._locked
@@ -2242,7 +2490,7 @@ class Deletescape(QMainWindow):
     def open_control_center(self):
         if self._locked:
             return
-        if self._control_center_open:
+        if self._control_center_open or self._control_center_animating:
             return
         log.info("Open control center")
         self._control_center_open = True
@@ -2257,17 +2505,13 @@ class Deletescape(QMainWindow):
             log.exception("Failed to capture blurred control center background")
 
         self._set_app_paused(True)
-        self.control_center.setVisible(True)
-        self._sync_overlay_z_order()
+        self._animate_control_center_open()
 
     def close_control_center(self):
-        if not self._control_center_open:
+        if (not self._control_center_open) or self._control_center_animating:
             return
         log.info("Close control center")
-        self.control_center.setVisible(False)
-        self._set_app_paused(False)
-        self._control_center_open = False
-        self._sync_overlay_z_order()
+        self._animate_control_center_close()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2317,6 +2561,7 @@ class Deletescape(QMainWindow):
 
         try:
             self._content_stack.setCurrentWidget(running.widget)
+            # self._play_content_transition()
         except Exception:
             pass
 

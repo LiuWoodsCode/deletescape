@@ -48,11 +48,7 @@ class App:
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
         container.setLayout(root)
-
-        title = QLabel("Messaging")
-        title.setAlignment(Qt.AlignCenter)
-        root.addWidget(title)
-
+        
         self._stack = QStackedLayout()
         root.addLayout(self._stack)
 

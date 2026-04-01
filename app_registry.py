@@ -28,6 +28,7 @@ class AppDescriptor:
     icon_path: Path | None
     hidden: bool
     autostart: bool
+    receive_custom_qss: bool
     module_name: str
     sys_path_entry: str
     app_class: type | None = None
@@ -73,6 +74,22 @@ def _coerce_int(value: Any) -> int | None:
         except Exception:
             return None
     return None
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "y", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return bool(default)
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:
@@ -253,6 +270,15 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
 
         autostart = bool(manifest.get("autostart", False)) or bool(manifest.get("autoStart", False))
 
+        launch_cfg = manifest.get("launch")
+        receive_custom_qss = False
+        if isinstance(launch_cfg, dict):
+            # Support both the requested legacy key and the corrected spelling.
+            receive_custom_qss = _coerce_bool(
+                launch_cfg.get("recieveCustomQSS", launch_cfg.get("")),
+                default=False,
+            )
+
         if not _has_app_class(main_py):
             log.warning(
                 "Skipping app (no App class)",
@@ -275,6 +301,7 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
             icon_path=icon_path,
             hidden=hidden,
             autostart=autostart,
+            receive_custom_qss=receive_custom_qss,
             module_name=module_name,
             sys_path_entry=sys_path_entry,
             app_class=None,
@@ -295,6 +322,7 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
                 "display_name": display_name,
                 "hidden": hidden,
                 "autostart": autostart,
+                "receive_custom_qss": receive_custom_qss,
                 "permissions": permissions,
             },
         )

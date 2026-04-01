@@ -406,6 +406,31 @@ def _zip_selected_paths(root: Path, relative_paths: list[Path], out_zip: Path) -
     return entries
 
 
+def _zip_directory_contents(directory: Path, out_zip: Path) -> list[str]:
+    debug(f"Creating component zip {out_zip} from directory contents of {directory}")
+
+    entries: list[str] = []
+
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as z:
+        for path in sorted(directory.rglob("*")):
+            rel = path.relative_to(directory).as_posix()
+
+            if path.is_dir():
+                if not any(path.iterdir()):
+                    entry = rel.rstrip("/") + "/"
+                    debug(f"Adding empty dir to component zip: {entry}")
+                    z.writestr(entry, "")
+                    entries.append(entry)
+            else:
+                debug(f"Adding path to component zip: {rel}")
+                z.write(path, rel)
+                entries.append(rel)
+
+    return entries
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
 
@@ -431,6 +456,7 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
                 return
 
             zip_path = component_dir / zip_name
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
             entries = _zip_selected_paths(staged_root, relative_paths, zip_path)
 
             with zipfile.ZipFile(zip_path, "r") as z:
@@ -452,6 +478,30 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
                 ],
             }
 
+        def add_app_component(app_dir: Path) -> None:
+            zip_name = f"app/{app_dir.name}.pkg"
+            zip_path = component_dir / zip_name
+            entries = _zip_directory_contents(app_dir, zip_path)
+
+            with zipfile.ZipFile(zip_path, "r") as z:
+                if len(z.infolist()) == 0:
+                    debug(f"Skipping empty app component zip: {zip_name}")
+                    return
+
+            component_zips[zip_name] = zip_path
+            component_layout[zip_name] = {
+                "zip_path": f"components/{zip_name}",
+                "install_root": f"/apps/{app_dir.name}",
+                "entries": [
+                    {
+                        "archive_path": entry,
+                        "install_path": f"/apps/{app_dir.name}/{entry.rstrip('/')}",
+                        "type": "directory" if entry.endswith("/") else "file",
+                    }
+                    for entry in entries
+                ],
+            }
+
         apps_dir = staged_root / "apps"
         if apps_dir.exists() and apps_dir.is_dir():
             app_common = [
@@ -463,7 +513,7 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
 
             for app_dir in sorted(apps_dir.iterdir(), key=lambda p: p.name.lower()):
                 if app_dir.is_dir() and app_dir.name != "__pycache__":
-                    add_component(f"app_{app_dir.name}.zip", [Path("apps") / app_dir.name])
+                    add_app_component(app_dir)
 
         splash_dir = staged_root / "splash"
         if splash_dir.exists():
@@ -497,9 +547,15 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
         if wallpapers_dir.exists():
             add_component("wallpapers.zip", [Path("assets") / "wallpaper"])
 
+        inclus_font_dir = staged_root / "assets" / "fonts"
+        if inclus_font_dir.exists():
+            add_component("fonts.zip", [Path("assets") / "fonts"])
+            
         defaults_dir = staged_root / "defaults"
         if defaults_dir.exists():
             add_component("defaults.zip", [Path("defaults")])
+
+        add_component("configs.zip", [Path("osconfig.json"), Path("deviceconfig.json")])
 
         core_os_entries = [
             Path(item.name)
@@ -511,12 +567,27 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
         if not component_zips:
             raise RuntimeError("No OTA components were generated.")
 
+        osconfig_path = staged_root / "osconfig.json"
+        deviceconfig_path = staged_root / "deviceconfig.json"
+
+        if not osconfig_path.exists():
+            raise FileNotFoundError("staged root missing osconfig.json")
+
+        if not deviceconfig_path.exists():
+            raise FileNotFoundError("staged root missing deviceconfig.json")
+
+        osconfig_data = json.loads(osconfig_path.read_text(encoding="utf-8"))
+        deviceconfig_data = json.loads(deviceconfig_path.read_text(encoding="utf-8"))
+
         manifest = {
+            "manifest_version": 2,
             "algorithm": "sha256",
             "components": {
                 zip_name: _sha256_file(zip_path)
                 for zip_name, zip_path in sorted(component_zips.items())
             },
+            "osconfig": osconfig_data,
+            "deviceconfig": deviceconfig_data,
         }
 
         output_zip.parent.mkdir(parents=True, exist_ok=True)
@@ -524,18 +595,7 @@ def _build_ota_zip(staged_root: Path, output_zip: Path) -> None:
             for zip_name, zip_path in sorted(component_zips.items()):
                 ota.write(zip_path, Path("components") / zip_name)
 
-            osconfig_path = staged_root / "osconfig.json"
-            deviceconfig_path = staged_root / "deviceconfig.json"
-
-            if not osconfig_path.exists():
-                raise FileNotFoundError("staged root missing osconfig.json")
-
-            if not deviceconfig_path.exists():
-                raise FileNotFoundError("staged root missing deviceconfig.json")
-
-            ota.write(osconfig_path, "osconfig.json")
-            ota.write(deviceconfig_path, "deviceconfig.json")
-            ota.writestr("hashes.json", json.dumps(manifest, indent=2) + "\n")
+            ota.writestr("manifest.json", json.dumps(manifest, indent=2) + "\n")
 
     debug("OTA zip created successfully")
 

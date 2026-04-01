@@ -16,6 +16,23 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+if os.name != "nt":
+    try:
+        import fcntl
+        import select
+        import struct
+        import termios
+    except Exception:  # pragma: no cover - optional on some platforms
+        fcntl = None
+        select = None
+        struct = None
+        termios = None
+else:  # pragma: no cover - Windows fallback path
+    fcntl = None
+    select = None
+    struct = None
+    termios = None
+
 try:
     import paramiko
 except Exception:  # pragma: no cover - optional dependency at runtime
@@ -110,6 +127,35 @@ def _collect_ip_addresses() -> list[str]:
     return ordered
 
 
+def _decode_ssh_text(value: Any) -> str:
+    try:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value or "")
+    except Exception:
+        return ""
+
+
+def _sanitize_pty_size(width: Any, height: Any) -> tuple[int, int]:
+    try:
+        cols = int(width)
+    except Exception:
+        cols = 80
+    try:
+        rows = int(height)
+    except Exception:
+        rows = 24
+    return max(20, cols), max(5, rows)
+
+
+def _set_pty_window_size(fd: int, cols: int, rows: int) -> None:
+    if fcntl is None or struct is None or termios is None or not hasattr(termios, "TIOCSWINSZ"):
+        return
+    cols, rows = _sanitize_pty_size(cols, rows)
+    packed = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
+
+
 def _default_shell_argv() -> list[str]:
     if os.name == "nt":
         for candidate in (
@@ -168,6 +214,11 @@ class _KAngelSSHServer(paramiko.ServerInterface if paramiko is not None else obj
         self.exec_command: str | None = None
         self.username = ""
         self.auth_error = ""
+        self.pty_term = "xterm-256color"
+        self.pty_cols = 80
+        self.pty_rows = 24
+        self.env_requests: dict[str, str] = {}
+        self.pty_resize_handler = None
 
     def check_channel_request(self, kind: str, chanid: int) -> int:
         if kind == "session":
@@ -186,6 +237,25 @@ class _KAngelSSHServer(paramiko.ServerInterface if paramiko is not None else obj
         return "password"
 
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes) -> bool:
+        self.pty_term = _decode_ssh_text(term) or "xterm-256color"
+        self.pty_cols, self.pty_rows = _sanitize_pty_size(width, height)
+        return True
+
+    def check_channel_env_request(self, channel, name, value) -> bool:
+        key = _decode_ssh_text(name).strip()
+        if not key:
+            return False
+        self.env_requests[key] = _decode_ssh_text(value)
+        return True
+
+    def check_channel_window_change_request(self, channel, width, height, pixelwidth, pixelheight) -> bool:
+        self.pty_cols, self.pty_rows = _sanitize_pty_size(width, height)
+        handler = self.pty_resize_handler
+        if callable(handler):
+            try:
+                handler(self.pty_cols, self.pty_rows)
+            except Exception:
+                pass
         return True
 
     def check_channel_shell_request(self, channel) -> bool:
@@ -205,11 +275,26 @@ class _KAngelSSHServer(paramiko.ServerInterface if paramiko is not None else obj
 
 
 class KAngelSession:
-    def __init__(self, manager: "KAngelManager", channel, username: str) -> None:
+    def __init__(
+        self,
+        manager: "KAngelManager",
+        channel,
+        username: str,
+        *,
+        pty_term: str = "xterm-256color",
+        pty_cols: int = 80,
+        pty_rows: int = 24,
+        env_requests: dict[str, str] | None = None,
+    ) -> None:
         self.manager = manager
         self.channel = channel
         self.username = str(username or "")
         self._python_locals: dict[str, Any] = {}
+        self._pty_term = str(pty_term or "xterm-256color")
+        self._pty_cols, self._pty_rows = _sanitize_pty_size(pty_cols, pty_rows)
+        self._env_requests = dict(env_requests or {})
+        self._active_pty_master_fd: int | None = None
+        self._pty_lock = threading.Lock()
 
     def write(self, text: str) -> None:
         if not text:
@@ -221,6 +306,19 @@ class KAngelSession:
 
     def writeln(self, text: str = "") -> None:
         self.write(text + "\n")
+
+    def update_pty_size(self, cols: int, rows: int) -> None:
+        self._pty_cols, self._pty_rows = _sanitize_pty_size(cols, rows)
+        master_fd = self._active_pty_master_fd
+        if master_fd is None:
+            return
+        with self._pty_lock:
+            if self._active_pty_master_fd != master_fd:
+                return
+            try:
+                _set_pty_window_size(master_fd, self._pty_cols, self._pty_rows)
+            except Exception:
+                pass
 
     def _readline(self, prompt: str = "") -> str | None:
         if prompt:
@@ -475,10 +573,48 @@ class KAngelSession:
             self.write(output if output.endswith("\n") else output + "\n")
         self.writeln(f"[exit {rc}]")
 
-    def _cmd_shell(self, arg_text: str) -> None:
-        argv = shlex.split(arg_text) if arg_text.strip() else _default_shell_argv()
-        self.writeln(f"entering shell: {' '.join(argv)}")
-        self.writeln("type exit to return to KAngel and the Needy Streamer Overload shell")
+    def _build_shell_env(self) -> dict[str, str]:
+        env = {str(k): str(v) for k, v in os.environ.items()}
+        for key, value in self._env_requests.items():
+            if key == "TERM" or key == "COLORTERM" or key == "LANG" or key.startswith("LC_"):
+                env[str(key)] = str(value)
+        env["TERM"] = str(self._env_requests.get("TERM") or self._pty_term or env.get("TERM") or "xterm-256color")
+        return env
+
+    def _channel_timeout(self) -> float:
+        return 0.25
+
+    def _set_channel_timeout(self, timeout: float | None) -> Any:
+        getter = getattr(self.channel, "gettimeout", None)
+        setter = getattr(self.channel, "settimeout", None)
+        previous = None
+        if callable(getter):
+            try:
+                previous = getter()
+            except Exception:
+                previous = None
+        if callable(setter):
+            try:
+                setter(timeout)
+            except Exception:
+                pass
+        return previous
+
+    def _restore_channel_timeout(self, timeout: Any) -> None:
+        setter = getattr(self.channel, "settimeout", None)
+        if not callable(setter):
+            return
+        try:
+            setter(timeout)
+        except Exception:
+            pass
+
+    def _shell_closed_message(self, returncode: int | None) -> str:
+        if returncode is None:
+            return "shell closed"
+        return f"shell closed [exit {returncode}]"
+
+    def _cmd_shell_piped(self, argv: list[str]) -> None:
         try:
             proc = subprocess.Popen(
                 argv,
@@ -486,6 +622,7 @@ class KAngelSession:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=self._build_shell_env(),
                 text=False,
             )
         except Exception as exc:
@@ -510,18 +647,25 @@ class KAngelSession:
         pump_thread = threading.Thread(target=_pump_stdout, name="KAngelShellPump", daemon=True)
         pump_thread.start()
 
+        previous_timeout = self._set_channel_timeout(self._channel_timeout())
         try:
-            while not stop.is_set():
-                data = self.channel.recv(1024)
+            while True:
+                if stop.is_set() or proc.poll() is not None:
+                    break
+                try:
+                    data = self.channel.recv(1024)
+                except socket.timeout:
+                    continue
+                except Exception:
+                    break
                 if not data:
                     break
                 if proc.stdin is None:
                     break
                 proc.stdin.write(data)
                 proc.stdin.flush()
-        except Exception:
-            pass
         finally:
+            self._restore_channel_timeout(previous_timeout)
             stop.set()
             try:
                 if proc.stdin is not None:
@@ -533,14 +677,149 @@ class KAngelSession:
             except Exception:
                 pass
             try:
-                proc.wait(timeout=2)
+                returncode = proc.wait(timeout=2)
             except Exception:
                 try:
                     proc.kill()
                 except Exception:
                     pass
+                try:
+                    returncode = proc.wait(timeout=2)
+                except Exception:
+                    returncode = proc.poll()
             self.writeln("")
-            self.writeln("shell closed")
+            self.writeln(self._shell_closed_message(returncode))
+
+    def _cmd_shell_posix_pty(self, argv: list[str]) -> None:
+        if fcntl is None or select is None or termios is None:
+            self._cmd_shell_piped(argv)
+            return
+        master_fd = None
+        slave_fd = None
+        proc = None
+        stop = threading.Event()
+        try:
+            master_fd, slave_fd = os.openpty()
+            _set_pty_window_size(slave_fd, self._pty_cols, self._pty_rows)
+
+            def _preexec() -> None:
+                os.setsid()
+                if fcntl is not None and termios is not None and hasattr(termios, "TIOCSCTTY"):
+                    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+            proc = subprocess.Popen(
+                argv,
+                cwd=str(self.manager.base_dir),
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=self._build_shell_env(),
+                text=False,
+                close_fds=True,
+                preexec_fn=_preexec,
+            )
+        except Exception as exc:
+            if slave_fd is not None:
+                try:
+                    os.close(slave_fd)
+                except Exception:
+                    pass
+            if master_fd is not None:
+                try:
+                    os.close(master_fd)
+                except Exception:
+                    pass
+            self.writeln(f"failed to start shell: {exc}")
+            return
+        finally:
+            if slave_fd is not None:
+                try:
+                    os.close(slave_fd)
+                except Exception:
+                    pass
+
+        self._active_pty_master_fd = master_fd
+        self.update_pty_size(self._pty_cols, self._pty_rows)
+
+        def _pump_pty() -> None:
+            try:
+                while not stop.is_set():
+                    readable, _, _ = select.select([master_fd], [], [], self._channel_timeout())
+                    if not readable:
+                        if proc.poll() is not None:
+                            break
+                        continue
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    try:
+                        self.channel.sendall(chunk)
+                    except Exception:
+                        break
+            finally:
+                stop.set()
+
+        pump_thread = threading.Thread(target=_pump_pty, name="KAngelShellPTYPump", daemon=True)
+        pump_thread.start()
+
+        previous_timeout = self._set_channel_timeout(self._channel_timeout())
+        try:
+            while True:
+                if stop.is_set() or proc.poll() is not None:
+                    break
+                try:
+                    data = self.channel.recv(1024)
+                except socket.timeout:
+                    continue
+                except Exception:
+                    break
+                if not data:
+                    break
+                try:
+                    os.write(master_fd, data)
+                except OSError:
+                    break
+        finally:
+            self._restore_channel_timeout(previous_timeout)
+            stop.set()
+            self._active_pty_master_fd = None
+            if master_fd is not None:
+                try:
+                    os.close(master_fd)
+                except Exception:
+                    pass
+            try:
+                returncode = proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    returncode = proc.wait(timeout=2)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        returncode = proc.wait(timeout=2)
+                    except Exception:
+                        returncode = proc.poll()
+            self.writeln("")
+            self.writeln(self._shell_closed_message(returncode))
+
+    def _cmd_shell(self, arg_text: str) -> None:
+        argv = shlex.split(arg_text) if arg_text.strip() else _default_shell_argv()
+        self.writeln(f"entering shell: {' '.join(argv)}")
+        self.writeln("type exit to return to KAngel and the Needy Streamer Overload shell")
+        if os.name != "nt":
+            self._cmd_shell_posix_pty(argv)
+            return
+        self._cmd_shell_piped(argv)
 
     def _cmd_py(self, code: str) -> None:
         code = str(code or "").strip()
@@ -778,7 +1057,16 @@ class KAngelManager:
                 channel.sendall(b"KAngel session timed out waiting for a shell request.\r\n")
                 return
             self.logger.info("KAngel client connected", extra={"address": str(address), "username": server.username})
-            session = KAngelSession(self, channel, server.username)
+            session = KAngelSession(
+                self,
+                channel,
+                server.username,
+                pty_term=server.pty_term,
+                pty_cols=server.pty_cols,
+                pty_rows=server.pty_rows,
+                env_requests=server.env_requests,
+            )
+            server.pty_resize_handler = session.update_pty_size
             if server.exec_command is not None:
                 session.run_command(server.exec_command)
                 channel.send_exit_status(0)

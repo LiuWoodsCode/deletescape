@@ -653,6 +653,11 @@ def main():
                 msg = f"init check failure: {reason}"
                 self._log.error(msg)
                 self._log.info("Device is now in recovery mode.")
+                details = dict(details or {})
+                if self._kangel_manager.is_running():
+                    details["kangel"] = self._kangel_manager.status_snapshot()
+                self._kangel_manager.attach_host_window(None)
+                self._kangel_manager.set_recovery_info(details)
                 recovery_img = _resolve_splash_asset(self._splash_dir / "recovery.png")
                 try:
                     self._app.setQuitOnLastWindowClosed(False)

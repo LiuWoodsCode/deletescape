@@ -1,0 +1,43 @@
+name: Build Generic RootFS + OTA
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-generic:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [rootfs, ota]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build generic image
+        run: |
+          mkdir -p dist
+          python builder/build_rootfs.py \
+            --source-root . \
+            --device-tree builder/device-trees/generic.json \
+            --format ${{ matrix.format }} \
+            --output dist/generic-${{ matrix.format }}.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generic-${{ matrix.format }}
+          path: dist/generic-${{ matrix.format }}.zip
+          if-no-files-found: error

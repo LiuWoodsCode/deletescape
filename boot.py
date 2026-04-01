@@ -31,6 +31,18 @@ try:
 except Exception:
     QFontDatabase = None
 
+def _resolve_splash_asset(path: Path) -> Path:
+    """Return the on-disk asset path even when filename casing differs."""
+    if path.exists():
+        return path
+    try:
+        for candidate in path.parent.iterdir():
+            if candidate.is_file() and candidate.name.lower() == path.name.lower():
+                return candidate
+    except FileNotFoundError:
+        pass
+    return path
+
 def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
     """
     Returns the correct splash asset for the current orientation.
@@ -43,8 +55,9 @@ def _select_oriented_splash(base_path: Path, target_size: QSize) -> Path:
         bootinternal_wide.png
         recovery_wide.png
     """
+    base_path = _resolve_splash_asset(base_path)
     if target_size.width() > target_size.height():
-        wide = base_path.with_name(base_path.stem + "_wide" + base_path.suffix)
+        wide = _resolve_splash_asset(base_path.with_name(base_path.stem + "_wide" + base_path.suffix))
         # Prefer a landscape-specific asset when available.
         if wide.exists():
             return wide
@@ -619,7 +632,7 @@ def main():
                 msg = f"init check failure: {reason}"
                 self._log.error(msg)
                 self._log.info("Device is now in recovery mode.")
-                recovery_img = self._splash_dir / "recovery.png"
+                recovery_img = _resolve_splash_asset(self._splash_dir / "recovery.png")
                 try:
                     self._app.setQuitOnLastWindowClosed(False)
                     self._os_instance.hide()

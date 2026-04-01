@@ -2553,7 +2553,7 @@ class Deletescape(QMainWindow):
 
         try:
             self._content_stack.setCurrentWidget(running.widget)
-            self._play_content_transition()
+            # self._play_content_transition()
         except Exception:
             pass
 

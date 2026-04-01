@@ -48,10 +48,29 @@ from fs_layout import get_user_data_layout
 
 KANGEL_PORT = 2222
 KANGEL_HOST_KEY_NAME = "kangel_host_key.pem"
+KANGEL_HISTORY_FILE_NAME = "history.json"
+KANGEL_HISTORY_LIMIT = 500
 KANGEL_WELCOME_LINES = (
     "Welcome, P-chan. Keep the stream stable.",
 )
 KANGEL_PROMPT = "KAngel> "
+KANGEL_COMMANDS = (
+    "help",
+    "info",
+    "recovery",
+    "apps",
+    "launch",
+    "logs",
+    "exec",
+    "shell",
+    "py",
+    "pdb",
+    "history",
+    "clear",
+    "exit",
+    "quit",
+    "logout",
+)
 
 
 def _boolish(value: Any) -> bool:
@@ -295,6 +314,7 @@ class KAngelSession:
         self._env_requests = dict(env_requests or {})
         self._active_pty_master_fd: int | None = None
         self._pty_lock = threading.Lock()
+        self._history: list[str] = self.manager.load_history()
 
     def write(self, text: str) -> None:
         if not text:
@@ -320,10 +340,302 @@ class KAngelSession:
             except Exception:
                 pass
 
+    def _clear_screen(self) -> None:
+        self.write("\x1b[2J\x1b[H")
+
+    def _redraw_input(self, prompt: str, text: str, cursor: int) -> None:
+        cursor = max(0, min(cursor, len(text)))
+        self.write("\r\x1b[2K")
+        self.write(f"{prompt}{text}")
+        tail = len(text) - cursor
+        if tail > 0:
+            self.write(f"\x1b[{tail}D")
+
+    def _read_escape_sequence(self) -> bytes:
+        seq = bytearray(b"\x1b")
+        previous_timeout = self._set_channel_timeout(0.02)
+        try:
+            for _ in range(8):
+                try:
+                    chunk = self.channel.recv(1)
+                except socket.timeout:
+                    break
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                seq.extend(chunk)
+                if chunk in b"~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
+                    break
+        finally:
+            self._restore_channel_timeout(previous_timeout)
+        return bytes(seq)
+
+    def _escape_shell_completion(self, value: str) -> str:
+        out: list[str] = []
+        for char in str(value or ""):
+            if char in " \t\\\"'`()[]{}$&;|<>":
+                out.append("\\")
+            out.append(char)
+        return "".join(out)
+
+    def _dedupe_completions(self, values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for value in values:
+            item = str(value or "")
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            out.append(item)
+        return sorted(out, key=lambda item: item.lower())
+
+    def _common_completion_prefix(self, candidates: list[str]) -> str:
+        if not candidates:
+            return ""
+        prefix = candidates[0]
+        for item in candidates[1:]:
+            limit = min(len(prefix), len(item))
+            idx = 0
+            while idx < limit and prefix[idx] == item[idx]:
+                idx += 1
+            prefix = prefix[:idx]
+            if not prefix:
+                break
+        return prefix
+
+    def _apply_completion_candidates(
+        self,
+        fragment: str,
+        candidates: list[str],
+        *,
+        append_space: bool = True,
+    ) -> tuple[str | None, list[str]]:
+        options = self._dedupe_completions(candidates)
+        if not options:
+            return None, []
+        if len(options) == 1:
+            value = options[0]
+            if append_space and not value.endswith(("/", "\\")):
+                value += " "
+            return value, options
+        prefix = self._common_completion_prefix(options)
+        if prefix and prefix != fragment:
+            return prefix, options
+        return None, options
+
+    def _find_token_start(self, text: str) -> int:
+        idx = len(text)
+        while idx > 0 and not text[idx - 1].isspace():
+            idx -= 1
+        return idx
+
+    def _resolve_completion_path(self, fragment: str) -> tuple[Path, str, str]:
+        raw_fragment = str(fragment or "")
+        sep = os.path.sep
+        altsep = os.path.altsep or ""
+        if raw_fragment.endswith((sep, altsep)) if altsep else raw_fragment.endswith(sep):
+            display_dir = raw_fragment
+            name_prefix = ""
+        else:
+            display_dir, name_prefix = os.path.split(raw_fragment)
+        expanded_dir = os.path.expanduser(display_dir or ".")
+        path = Path(expanded_dir)
+        if not path.is_absolute():
+            path = self.manager.base_dir / path
+        return path, display_dir, name_prefix
+
+    def _path_completion_candidates(self, fragment: str) -> list[str]:
+        directory, display_dir, name_prefix = self._resolve_completion_path(fragment)
+        if not directory.exists() or not directory.is_dir():
+            return []
+        candidates: list[str] = []
+        for child in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+            if name_prefix and not child.name.startswith(name_prefix):
+                continue
+            if display_dir:
+                if display_dir.endswith((os.path.sep, os.path.altsep or os.path.sep)):
+                    rendered = f"{display_dir}{child.name}"
+                else:
+                    rendered = f"{display_dir}{os.path.sep}{child.name}"
+            else:
+                rendered = child.name
+            if child.is_dir():
+                rendered += os.path.sep
+            candidates.append(self._escape_shell_completion(rendered))
+        return candidates
+
+    def _executable_completion_candidates(self, fragment: str) -> list[str]:
+        prefix = str(fragment or "")
+        pathext = [ext.lower() for ext in os.environ.get("PATHEXT", ".EXE").split(os.pathsep)] if os.name == "nt" else []
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            directory = str(directory or "").strip()
+            if not directory:
+                continue
+            path = Path(directory)
+            if not path.exists() or not path.is_dir():
+                continue
+            try:
+                entries = list(path.iterdir())
+            except Exception:
+                continue
+            for entry in entries:
+                name = entry.name
+                if prefix:
+                    if os.name == "nt":
+                        if not name.lower().startswith(prefix.lower()):
+                            continue
+                    elif not name.startswith(prefix):
+                        continue
+                if not entry.is_file():
+                    continue
+                if os.name == "nt":
+                    if pathext and entry.suffix.lower() not in pathext:
+                        continue
+                elif not os.access(entry, os.X_OK):
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                candidates.append(self._escape_shell_completion(name))
+        return candidates
+
+    def _shell_completion_candidates(self, fragment: str, *, first_token: bool) -> list[str]:
+        raw_fragment = str(fragment or "")
+        wants_path = (
+            raw_fragment.startswith(("~", ".", os.path.sep))
+            or (os.path.altsep and raw_fragment.startswith(os.path.altsep))
+            or os.path.sep in raw_fragment
+            or (os.path.altsep and os.path.altsep in raw_fragment)
+        )
+        candidates: list[str] = []
+        if first_token and not wants_path:
+            candidates.extend(self._executable_completion_candidates(raw_fragment))
+        candidates.extend(self._path_completion_candidates(raw_fragment))
+        return self._dedupe_completions(candidates)
+
+    def _command_completion_candidates(self, fragment: str) -> list[str]:
+        return [command for command in KANGEL_COMMANDS if command.startswith(fragment)]
+
+    def _app_completion_candidates(self, fragment: str) -> list[str]:
+        ok, payload = self._host_call(
+            lambda host: sorted((getattr(host, "apps", {}) or {}).keys())
+        )
+        if not ok or not isinstance(payload, list):
+            return []
+        return [item for item in payload if isinstance(item, str) and item.startswith(fragment)]
+
+    def _log_completion_candidates(self, fragment: str) -> list[str]:
+        logs_dir = self.manager.base_dir / "logs"
+        candidates = ["latest"]
+        try:
+            for item in logs_dir.iterdir():
+                if item.is_file():
+                    candidates.append(item.name)
+        except Exception:
+            pass
+        return [item for item in self._dedupe_completions(candidates) if item.startswith(fragment)]
+
+    def _complete_plain_line(self, line: str, cursor: int) -> tuple[str | None, int, list[str]]:
+        before = line[:cursor]
+        after = line[cursor:]
+        token_start = self._find_token_start(before)
+        fragment = before[token_start:]
+        replacement, candidates = self._apply_completion_candidates(
+            fragment,
+            self._command_completion_candidates(fragment),
+        )
+        if replacement is None:
+            return None, cursor, candidates
+        updated = before[:token_start] + replacement + after
+        return updated, len(before[:token_start] + replacement), candidates
+
+    def _complete_shell_like_text(self, text: str, cursor: int) -> tuple[str | None, int, list[str]]:
+        before = text[:cursor]
+        after = text[cursor:]
+        token_start = self._find_token_start(before)
+        prefix = before[:token_start]
+        fragment = before[token_start:]
+        replacement, candidates = self._apply_completion_candidates(
+            fragment,
+            self._shell_completion_candidates(fragment, first_token=not prefix.strip()),
+        )
+        if replacement is None:
+            return None, cursor, candidates
+        updated = prefix + replacement + after
+        return updated, len(prefix + replacement), candidates
+
+    def _complete_kangel_input(self, line: str, cursor: int) -> tuple[str | None, int, list[str]]:
+        before = line[:cursor]
+        stripped = before.lstrip()
+        indent = before[: len(before) - len(stripped)]
+
+        if stripped.startswith("!"):
+            updated, new_cursor, candidates = self._complete_shell_like_text(stripped[1:], len(stripped) - 1)
+            if updated is None:
+                return None, cursor, candidates
+            final = indent + "!" + updated + line[cursor:]
+            return final, len(indent) + 1 + new_cursor, candidates
+
+        parts = stripped.split(None, 1)
+        first = parts[0] if parts else ""
+
+        if not parts or (len(parts) == 1 and not stripped.endswith(" ")):
+            return self._complete_plain_line(line, cursor)
+
+        if first in {"exec", "shell"}:
+            command_offset = len(indent) + len(first) + 1
+            shell_text = line[command_offset:]
+            shell_cursor = max(0, cursor - command_offset)
+            updated, new_cursor, candidates = self._complete_shell_like_text(shell_text, shell_cursor)
+            if updated is None:
+                return None, cursor, candidates
+            final = line[:command_offset] + updated
+            return final, command_offset + new_cursor, candidates
+
+        before_token = line[: self._find_token_start(before)]
+        fragment = before[self._find_token_start(before):]
+        if first == "launch":
+            replacement, candidates = self._apply_completion_candidates(fragment, self._app_completion_candidates(fragment))
+        elif first == "logs":
+            replacement, candidates = self._apply_completion_candidates(fragment, self._log_completion_candidates(fragment))
+        else:
+            return None, cursor, []
+        if replacement is None:
+            return None, cursor, candidates
+        updated = before_token + replacement + line[cursor:]
+        return updated, len(before_token + replacement), candidates
+
+    def _show_completion_candidates(self, prompt: str, text: str, cursor: int, candidates: list[str]) -> None:
+        if not candidates:
+            self.write("\a")
+            return
+        self.write("\n")
+        limit = 40
+        for item in candidates[:limit]:
+            self.writeln(item)
+        if len(candidates) > limit:
+            self.writeln(f"... and {len(candidates) - limit} more")
+        self._redraw_input(prompt, text, cursor)
+
+    def _append_history_entry(self, command: str) -> None:
+        value = str(command or "").strip()
+        if not value:
+            return
+        if self._history and self._history[-1] == value:
+            return
+        self._history.append(value)
+        self._history = self._history[-KANGEL_HISTORY_LIMIT:]
+        self.manager.append_history_entry(value)
+
     def _readline(self, prompt: str = "") -> str | None:
-        if prompt:
-            self.write(prompt)
-        data = bytearray()
+        text = ""
+        cursor = 0
+        history_index: int | None = None
+        history_saved_current = ""
+        self._redraw_input(prompt, text, cursor)
         while True:
             try:
                 chunk = self.channel.recv(1)
@@ -333,21 +645,128 @@ class KAngelSession:
                 return None
             if chunk in (b"\r", b"\n"):
                 self.write("\n")
-                return data.decode("utf-8", errors="replace")
+                return text
             if chunk in (b"\x08", b"\x7f"):
-                if data:
-                    data = data[:-1]
-                    self.write("\b \b")
+                if cursor > 0:
+                    text = text[: cursor - 1] + text[cursor:]
+                    cursor -= 1
+                    self._redraw_input(prompt, text, cursor)
+                else:
+                    self.write("\a")
                 continue
             if chunk == b"\x03":
                 self.write("^C\n")
                 return ""
+            if chunk == b"\x04":
+                if not text:
+                    self.write("^D\n")
+                    return None
+                if cursor < len(text):
+                    text = text[:cursor] + text[cursor + 1 :]
+                    self._redraw_input(prompt, text, cursor)
+                else:
+                    self.write("\a")
+                continue
+            if chunk == b"\t":
+                updated, new_cursor, candidates = self._complete_kangel_input(text, cursor)
+                if updated is not None:
+                    text = updated
+                    cursor = new_cursor
+                    self._redraw_input(prompt, text, cursor)
+                else:
+                    self._show_completion_candidates(prompt, text, cursor, candidates)
+                continue
+            if chunk == b"\x01":
+                cursor = 0
+                self._redraw_input(prompt, text, cursor)
+                continue
+            if chunk == b"\x05":
+                cursor = len(text)
+                self._redraw_input(prompt, text, cursor)
+                continue
+            if chunk == b"\x0b":
+                text = text[:cursor]
+                self._redraw_input(prompt, text, cursor)
+                continue
+            if chunk == b"\x15":
+                text = text[cursor:]
+                cursor = 0
+                self._redraw_input(prompt, text, cursor)
+                continue
+            if chunk == b"\x0c":
+                self._clear_screen()
+                self._redraw_input(prompt, text, cursor)
+                continue
+            if chunk == b"\x1b":
+                seq = self._read_escape_sequence()
+                if seq in {b"\x1b[A", b"\x1bOA"}:
+                    if self._history:
+                        if history_index is None:
+                            history_saved_current = text
+                            history_index = len(self._history) - 1
+                        else:
+                            history_index = max(0, history_index - 1)
+                        text = self._history[history_index]
+                        cursor = len(text)
+                        self._redraw_input(prompt, text, cursor)
+                    else:
+                        self.write("\a")
+                    continue
+                if seq in {b"\x1b[B", b"\x1bOB"}:
+                    if history_index is None:
+                        self.write("\a")
+                    else:
+                        history_index += 1
+                        if history_index >= len(self._history):
+                            history_index = None
+                            text = history_saved_current
+                        else:
+                            text = self._history[history_index]
+                        cursor = len(text)
+                        self._redraw_input(prompt, text, cursor)
+                    continue
+                if seq in {b"\x1b[C", b"\x1bOC"}:
+                    if cursor < len(text):
+                        cursor += 1
+                        self._redraw_input(prompt, text, cursor)
+                    else:
+                        self.write("\a")
+                    continue
+                if seq in {b"\x1b[D", b"\x1bOD"}:
+                    if cursor > 0:
+                        cursor -= 1
+                        self._redraw_input(prompt, text, cursor)
+                    else:
+                        self.write("\a")
+                    continue
+                if seq in {b"\x1b[H", b"\x1bOH", b"\x1b[1~", b"\x1b[7~"}:
+                    cursor = 0
+                    self._redraw_input(prompt, text, cursor)
+                    continue
+                if seq in {b"\x1b[F", b"\x1bOF", b"\x1b[4~", b"\x1b[8~"}:
+                    cursor = len(text)
+                    self._redraw_input(prompt, text, cursor)
+                    continue
+                if seq == b"\x1b[3~":
+                    if cursor < len(text):
+                        text = text[:cursor] + text[cursor + 1 :]
+                        self._redraw_input(prompt, text, cursor)
+                    else:
+                        self.write("\a")
+                    continue
+                continue
             try:
                 decoded = chunk.decode("utf-8", errors="replace")
             except Exception:
                 decoded = ""
-            data.extend(chunk)
-            self.write(decoded)
+            if not decoded or not decoded.isprintable():
+                continue
+            if history_index is not None:
+                history_index = None
+                history_saved_current = ""
+            text = text[:cursor] + decoded + text[cursor:]
+            cursor += len(decoded)
+            self._redraw_input(prompt, text, cursor)
 
     def _host_call(self, fn, timeout: float = 5.0) -> tuple[bool, Any]:
         host = self.manager.host_window
@@ -410,7 +829,8 @@ class KAngelSession:
         self.writeln("  exec <command>     Run one shell command and print output")
         self.writeln("  shell              Enter a raw local shell session")
         self.writeln("  py <code>          Execute Python in-process")
-        self.writeln("  pdb                Break into pdb for this session thread")
+        self.writeln("  history [n]        Show recent KAngel commands")
+        self.writeln("  clear              Clear the terminal screen")
         self.writeln("  exit               Close the KAngel session")
 
     def _cmd_info(self) -> None:
@@ -542,6 +962,22 @@ class KAngelSession:
         self.writeln(f"==> {path.name} <==")
         for line in content[-lines:]:
             self.writeln(line)
+
+    def _cmd_history(self, arg_text: str) -> None:
+        arg_text = str(arg_text or "").strip()
+        limit = 20
+        if arg_text:
+            try:
+                limit = max(1, min(KANGEL_HISTORY_LIMIT, int(arg_text)))
+            except Exception:
+                self.writeln(f"invalid history count: {arg_text}")
+                return
+        if not self._history:
+            self.writeln("history is empty")
+            return
+        start = max(0, len(self._history) - limit)
+        for idx, item in enumerate(self._history[start:], start=start + 1):
+            self.writeln(f"{idx:>4}  {item}")
 
     def _run_shell_command(self, command: str) -> tuple[int, str]:
         if os.name == "nt":
@@ -845,24 +1281,6 @@ class KAngelSession:
         except Exception:
             self.writeln(traceback.format_exc().rstrip())
 
-    def _cmd_pdb(self) -> None:
-        import pdb
-
-        reader = self.channel.makefile("r", -1)
-        writer = self.channel.makefile("w", -1)
-        namespace = self._build_runtime_namespace()
-        manager = self.manager
-        host = self.manager.host_window
-        recovery_info = self.manager.recovery_info
-        debugger = pdb.Pdb(stdin=reader, stdout=writer)
-        frame = inspect.currentframe()
-        if frame is None:
-            self.writeln("pdb unavailable")
-            return
-        self.writeln("entering pdb on the KAngel session thread; P-chan is now live-debugging")
-        debugger.set_trace(frame)
-        self._python_locals.update(namespace)
-
     def run_command(self, command: str) -> bool:
         raw = str(command or "").strip()
         if not raw:
@@ -887,14 +1305,17 @@ class KAngelSession:
         if raw == "logs" or raw.startswith("logs "):
             self._cmd_logs(raw.partition(" ")[2] if " " in raw else "")
             return True
+        if raw == "history" or raw.startswith("history "):
+            self._cmd_history(raw.partition(" ")[2] if " " in raw else "")
+            return True
+        if raw == "clear":
+            self._clear_screen()
+            return True
         if raw.startswith("exec "):
             self._cmd_exec(raw.partition(" ")[2])
             return True
         if raw.startswith("py "):
             self._cmd_py(raw.partition(" ")[2])
-            return True
-        if raw == "pdb":
-            self._cmd_pdb()
             return True
         if raw == "shell" or raw.startswith("shell "):
             self._cmd_shell(raw.partition(" ")[2] if " " in raw else "")
@@ -910,11 +1331,13 @@ class KAngelSession:
         for line in KANGEL_WELCOME_LINES:
             self.writeln(line)
         self.writeln("type 'help' for commands")
+        self.writeln("tab completes; arrows navigate history and the current line")
         while True:
             line = self._readline(KANGEL_PROMPT)
             if line is None:
                 return
             try:
+                self._append_history_entry(line)
                 if not self.run_command(line):
                     return
             except Exception:
@@ -935,6 +1358,7 @@ class KAngelManager:
         self._host_key = None
         self.host_window: Any | None = None
         self.recovery_info: dict[str, Any] | None = None
+        self._history_lock = threading.RLock()
 
     def attach_host_window(self, host_window: Any | None) -> None:
         self.host_window = host_window
@@ -1006,12 +1430,47 @@ class KAngelManager:
             except Exception:
                 pass
 
-    def _host_key_path(self) -> Path:
+    def _state_dir(self) -> Path:
         layout = get_user_data_layout(self.base_dir)
         layout.ensure_directories()
         key_dir = layout.data_system / "KAngel"
         key_dir.mkdir(parents=True, exist_ok=True)
-        return key_dir / KANGEL_HOST_KEY_NAME
+        return key_dir
+
+    def _host_key_path(self) -> Path:
+        return self._state_dir() / KANGEL_HOST_KEY_NAME
+
+    def _history_path(self) -> Path:
+        return self._state_dir() / KANGEL_HISTORY_FILE_NAME
+
+    def _load_history_unlocked(self) -> list[str]:
+        try:
+            raw = json.loads(self._history_path().read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(raw, list):
+            return []
+        values = [str(item).strip() for item in raw if str(item).strip()]
+        return values[-KANGEL_HISTORY_LIMIT:]
+
+    def load_history(self) -> list[str]:
+        with self._history_lock:
+            return self._load_history_unlocked()
+
+    def append_history_entry(self, command: str) -> None:
+        value = str(command or "").strip()
+        if not value:
+            return
+        with self._history_lock:
+            history = self._load_history_unlocked()
+            if history and history[-1] == value:
+                return
+            history.append(value)
+            history = history[-KANGEL_HISTORY_LIMIT:]
+            try:
+                self._history_path().write_text(json.dumps(history, indent=2), encoding="utf-8")
+            except Exception:
+                pass
 
     def _load_or_create_host_key(self):
         key_path = self._host_key_path()

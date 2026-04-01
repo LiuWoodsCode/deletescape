@@ -95,12 +95,13 @@ class RecoveryWindow(QMainWindow):
         self._debug_label.setWordWrap(True)
 
         self._debug_label.setStyleSheet("""
-            QLabel {
-                background-color: rgba(0,0,0,100);
-                color: #FFFFFF;
-                font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
-                font-size: 13px;
-            }
+        QLabel {
+            color: #FFFFFF;
+            background-color: rgba(0, 0, 0, 255);
+            padding: 8px 8px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Mono', 'Source Code Pro', 'IBM Plex Mono', 'Recursive Mono', 'Input Mono', 'Dank Mono', 'Operator Mono', 'SF Mono', 'Menlo', 'Consolas', 'Monaco', 'Liberation Mono', 'DejaVu Sans Mono', 'Ubuntu Mono', 'Noto Sans Mono', 'Droid Sans Mono', 'Courier New', monospace;
+            font-size: 13px;
+        }
         """)
 
         self._debug_label.raise_()

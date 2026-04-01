@@ -1,0 +1,10 @@
+{
+  "appId": "pkginstaller",
+  "bundleId": "com.deletescapeos.pkginstaller",
+  "displayName": "Package Installer",
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": [],
+  "hidden": true,
+  "file_handlers": [".pkg"]
+}

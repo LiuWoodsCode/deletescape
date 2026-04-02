@@ -15,6 +15,9 @@ import threading
 import traceback
 from pathlib import Path
 from typing import Any
+import getpass
+import hashlib
+from pathlib import Path
 
 if os.name != "nt":
     try:
@@ -209,23 +212,39 @@ def shutil_which(program: str) -> str | None:
     return None
 
 
+def _generate_pin_from_key(path: Path) -> str:
+    try:
+        data = path.read_bytes()
+    except Exception:
+        return None
+
+    # hash the file contents
+    digest = hashlib.sha256(data).hexdigest()
+
+    # turn into a 6-digit PIN (stable, numeric)
+    pin_int = int(digest, 16) % 1_000_000
+    return f"{pin_int:06d}"
+
+
 def authenticate_system_user(username: str, password: str) -> tuple[bool, str]:
     if not username:
         return False, "username is required"
     if password is None:
         return False, "password is required"
 
-    demo_accounts = {
-        ("sayori", "justmonika"),
-        ("ame", "omgkawaiiangel"),
-        ("p-chan", "internetangel"),
-        ("kangel", "needystreameroverload"),
-    }
-    if (str(username or ""), str(password or "")) in demo_accounts:  ## todo: this is horrible
+    current_user = getpass.getuser()
+
+    key_path = Path("userdata/Data/System/KAngel/kangel_host_key.pem")
+    expected_pin = _generate_pin_from_key(key_path)
+
+    if expected_pin is None:
+        return False, "unable to read host key"
+
+    if username == current_user and password == expected_pin:
         return True, "ok"
     else:
         return False, "username or password incorrect"
-
+    
 class _KAngelSSHServer(paramiko.ServerInterface if paramiko is not None else object):
     def __init__(self) -> None:
         super().__init__()

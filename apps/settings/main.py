@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import getpass
+import hashlib
 import shutil
 import sys
 from pathlib import Path
@@ -1553,6 +1555,17 @@ class SettingsWindow(QMainWindow):
         p.backRequested.connect(lambda: self._go("section.system"))
         return p
 
+    def _generate_pin_from_key(self, path: Path) -> str:
+        try:
+            data = path.read_bytes()
+        except Exception as e:
+            print(f"error reading key file: {e}")
+            return None
+
+        digest = hashlib.sha256(data).hexdigest()
+        pin_int = int(digest, 16) % 1_000_000
+        return f"{pin_int:06d}"
+
     def _make_system_developer(self) -> QWidget:
         def build(c: QVBoxLayout) -> None:
             c.addWidget(self._make_checkbox("USB Debugging", False))
@@ -1573,8 +1586,21 @@ class SettingsWindow(QMainWindow):
             channel = str(getattr(os_cfg, "channel", "") or "").strip().lower()
             manager = getattr(self.host_window, "kangel_manager", None) if self.host_window is not None else None
             state = "Listening" if bool(getattr(manager, "is_running", lambda: False)()) else "Stopped"
+            try:
+                username = getpass.getuser()
+                key_path = Path("userdata/Data/System/KAngel/kangel_host_key.pem")
+
+                pin = self._generate_pin_from_key(key_path)
+            except:
+                username = "N/A"
+                pin = "N/A" 
+                
             note = QLabel(
-                "KAngel listens on TCP 2222 and authenticates with the host Windows/Linux username and password.\n"
+                "KAngel listens on TCP 2222 and runs an SSH console for debugging and remote management.\n"
+                "To login:\n"
+                f"Username: {username}\n"
+                f"Password: {pin}\n"
+                "If you need to get a new KAngel password, factory reset your device.\n"
                 f"Status: {state}."
             )
             note.setWordWrap(True)

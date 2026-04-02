@@ -1331,7 +1331,6 @@ class KAngelSession:
         for line in KANGEL_WELCOME_LINES:
             self.writeln(line)
         self.writeln("type 'help' for commands")
-        self.writeln("tab completes; arrows navigate history and the current line")
         while True:
             line = self._readline(KANGEL_PROMPT)
             if line is None:

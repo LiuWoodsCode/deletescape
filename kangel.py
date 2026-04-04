@@ -1,5 +1,3 @@
-
-
 import ctypes
 import ctypes.util
 import getpass

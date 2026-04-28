@@ -12,7 +12,7 @@ log = get_logger("drvconfig")
 def _default_driver(component: str) -> str:
     comp = str(component or "").strip().lower()
     if comp == "battery":
-        return "winnt" if os.name == "nt" else "none"
+        return "winnt" if os.name == "nt" else "upower"
     if comp == "modem":
         return "none"
     if comp == "location":

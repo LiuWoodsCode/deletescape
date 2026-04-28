@@ -8,9 +8,14 @@ from PySide6.QtCore import QLoggingCategory
 
 from browser import Browser  # Uses the existing browser module (no UI embedded here)
 
-from logger import get_logger
-log = get_logger("crimew")
-
+try:
+    from logger import get_logger
+    log = get_logger("crimew")
+except:
+    if __name__ == "__main__":
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+        log = logging.getLogger("crimew")
 class App(QObject):
     """
     Wrapper App for the Simple Browser example that:
@@ -140,3 +145,16 @@ class App(QObject):
             self.close()
         except Exception:
             pass
+
+if __name__ == "__main__":
+    # Open the browser window directly if this file is run standalone (for testing)
+    # Use a GUI application (QApplication) rather than QCoreApplication to
+    # avoid segfaults when creating GUI/WebEngine windows.
+    import sys
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+    test_app = App(None, None, start_url="https://www.qt.io", enable_debug_logging=True)
+    test_app.show()
+    sys.exit(app.exec())
+    

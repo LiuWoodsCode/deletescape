@@ -8,7 +8,12 @@ import requests
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, QUrl, Signal, Slot, QStringListModel, Qt
 from PySide6.QtWidgets import QCompleter, QLineEdit
 
-from input_helper import VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY, VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY
+try:
+	from input_helper import VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY, VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY
+	is_deletescape = True
+except:
+	is_deletescape = False
+	pass
 
 import autocomplete
 from dataclasses import dataclass
@@ -129,8 +134,9 @@ class Omnibox(QLineEdit):
 		super().__init__(parent)
 		# Keep the on-screen keyboard alive while suggestions are shown
 		# so that interacting with the completer doesn't dismiss it.
-		self.setProperty(VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY, True)
-		self.setProperty(VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY, True)
+		if is_deletescape:
+			self.setProperty(VIRTUAL_KEYBOARD_PERSISTENT_PROPERTY, True)
+			self.setProperty(VIRTUAL_KEYBOARD_CLOSE_ON_ENTER_PROPERTY, True)
 		self._get_search_provider = get_search_provider
 		self._request_id = 0
 

@@ -5,7 +5,7 @@
   "arch": "armv7l",
   "has_hw_home": false,
   "drivers": {
-    "battery": "psutil",
+    "battery": "upower",
     "modem": "none",
     "location": "none",
     "wifi": "nmcli",

@@ -21,27 +21,58 @@ def _run_upower_dump() -> str:
     return result.stdout
 
 
-def _parse_battery_block(output: str) -> dict:
-    """Extract BAT0 block into a key/value dict."""
-    lines = output.splitlines()
+def _iter_device_blocks(output: str) -> list[tuple[str, dict[str, str]]]:
+    blocks: list[tuple[str, dict[str, str]]] = []
+    current_header: str | None = None
+    current_data: dict[str, str] = {}
 
-    in_battery = False
-    data: dict[str, str] = {}
-
-    for line in lines:
-        if "Device:" in line and "battery_BAT" in line:
-            in_battery = True
+    for raw_line in output.splitlines():
+        if raw_line.startswith("Device:"):
+            if current_header is not None:
+                blocks.append((current_header, current_data))
+            current_header = raw_line.split(":", 1)[1].strip()
+            current_data = {}
             continue
 
-        if in_battery:
-            if line.strip() == "":
-                break  # end of block
+        if current_header is None:
+            continue
 
-            if ":" in line:
-                key, value = line.split(":", 1)
-                data[key.strip()] = value.strip()
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
 
-    return data
+        key, value = line.split(":", 1)
+        current_data[key.strip()] = value.strip()
+
+    if current_header is not None:
+        blocks.append((current_header, current_data))
+
+    return blocks
+
+
+def _parse_battery_block(output: str) -> dict:
+    """Extract battery data, preferring `DisplayDevice` when available."""
+    display_device_data: dict[str, str] = {}
+    primary_battery_data: dict[str, str] = {}
+
+    for device_path, data in _iter_device_blocks(output):
+        device_name = device_path.rsplit("/", 1)[-1].lower()
+        if device_name == "displaydevice":
+            display_device_data = data
+            continue
+
+        if not primary_battery_data and (device_name == "battery" or device_name.startswith("battery_")):
+            primary_battery_data = data
+
+    if display_device_data:
+        merged = dict(display_device_data)
+        for key, value in primary_battery_data.items():
+            existing = merged.get(key)
+            if existing is None or existing == "" or existing.lower() in {"unknown", "n/a"}:
+                merged[key] = value
+        return merged
+
+    return primary_battery_data
 
 
 def _safe_float(value: Optional[str]) -> Optional[float]:

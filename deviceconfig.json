@@ -4,7 +4,7 @@
   "model_name": "Simulated Device",
   "has_hw_home": false,
   "drivers": {
-    "battery": "winnt",
+    "battery": "upower",
     "modem": "simulated",
     "location": "simulated",
     "wifi": "netsh",

@@ -25,6 +25,7 @@ class App:
         self._current_path: Path | None = None
         self._duration_ms = 0
         self._slider_is_pressed = False
+        self._background_enabled = False
         self._session_timer = QTimer(container)
         self._session_timer.timeout.connect(self._publish_media_session)
         self._session_timer.setInterval(1000)
@@ -40,7 +41,6 @@ class App:
 
         self.video = QVideoWidget(container)
         self.video.setMinimumHeight(220)
-        self.video.setStyleSheet("background-color: black;")
         self.player.setVideoOutput(self.video)
         self.layout.addWidget(self.video, 1)
 
@@ -94,11 +94,6 @@ class App:
         self.player.errorOccurred.connect(self._on_error)
 
         self._set_controls_enabled(False)
-
-        try:
-            self.window.enable_background(True)
-        except Exception:
-            pass
 
         initial = self._consume_open_intent()
         if initial is not None:
@@ -167,6 +162,16 @@ class App:
         self.stop_btn.setEnabled(enabled)
         self.position_slider.setEnabled(enabled)
 
+    def _set_background_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled)
+        if self._background_enabled == enabled:
+            return
+        try:
+            self.window.enable_background(enabled, app_id=self.app_id)
+            self._background_enabled = enabled
+        except Exception:
+            pass
+
     def _toggle_play_pause(self) -> None:
         if self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
@@ -181,6 +186,7 @@ class App:
 
     def _stop(self) -> None:
         self.player.stop()
+        self._set_background_enabled(False)
         self._publish_media_session(playback_state="stopped")
 
     def _seek_relative(self, offset_ms: int = 0) -> None:
@@ -233,17 +239,21 @@ class App:
         if state == QMediaPlayer.PlayingState:
             self.play_btn.setText("Pause")
             self.status_label.setText(self._current_path.name if self._current_path else "Playing")
+            self._set_background_enabled(True)
             self._session_timer.start()
         elif state == QMediaPlayer.PausedState:
             self.play_btn.setText("Play")
+            self._set_background_enabled(False)
             self._session_timer.stop()
         else:
             self.play_btn.setText("Play")
+            self._set_background_enabled(False)
             self._session_timer.stop()
         self._publish_media_session()
 
     def _on_media_status_changed(self, status) -> None:
         if status == QMediaPlayer.EndOfMedia:
+            self._set_background_enabled(False)
             self._publish_media_session(playback_state="stopped")
 
     def _on_error(self, error, error_string: str = "") -> None:
@@ -321,6 +331,7 @@ class App:
             self.player.stop()
         except Exception:
             pass
+        self._set_background_enabled(False)
         try:
             self.window.clear_media_session(app_id=self.app_id)
         except Exception:

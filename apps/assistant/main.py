@@ -15,7 +15,7 @@ from deletescapeui import get_theme, qcolor_css, styled_button, styled_line_edit
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("assistant.frontend.main")
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal, QByteArray, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QUrl
+from PySide6.QtCore import QObject, Qt, QThread, Signal, QByteArray, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve
 from PySide6.QtWidgets import (
     QApplication,
     QLayout,
@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QGraphicsOpacityEffect,
 )
-from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from card_renderer import render_card_html
 
@@ -222,10 +221,12 @@ class App(QObject):
 
         self.container.setLayout(main)
 
-        self.cards_view = QWebEngineView()
+        self.cards_view = QTextBrowser()
         self.cards_view.setObjectName("CardsView")
         self.cards_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.cards_view.setContextMenuPolicy(Qt.NoContextMenu)
+        self.cards_view.setOpenExternalLinks(True)
+        self.cards_view.setOpenLinks(True)
         main.addWidget(self.cards_view, 1)
 
         self._current_cards: List[Dict[str, Any]] = []
@@ -272,7 +273,7 @@ class App(QObject):
         divider = qcolor_css(theme.divider)
 
         css = f"""
-QWebEngineView#CardsView {{
+QTextBrowser#CardsView {{
     border: none;
     background: transparent;
 }}
@@ -438,7 +439,7 @@ a:hover {{
     def _set_cards_html(self, cards: List[Dict[str, Any]], animate: bool = False) -> None:
         self._current_cards = cards
         html = self._compose_cards_html(cards)
-        self.cards_view.setHtml(html, QUrl("about:blank"))
+        self.cards_view.setHtml(html)
         if animate and cards:
             self._animate_cards_in()
         elif cards:
@@ -716,6 +717,7 @@ a:hover {{
 
 def main() -> int:
     app = QApplication(sys.argv)
+    window = QMainWindow()
     window.show()
     return app.exec()
 

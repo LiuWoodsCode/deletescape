@@ -10,10 +10,21 @@ from logger import PROCESS_START, get_logger
 log = get_logger("hal.audio")
 
 @dataclass(frozen=True)
+class AudioDevice:
+    id: str
+    name: str
+    description: str | None = None
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
 class AudioInfo:
     volume_percent: int | None = None
     muted: bool | None = None
     output_route: str | None = None
+    output_device_id: str | None = None
+    output_device_name: str | None = None
+    output_devices: tuple[AudioDevice, ...] = ()
     driver: str = "unknown"
 
 
@@ -25,6 +36,12 @@ class AudioDriverBase:
         return False
 
     def set_muted(self, muted: bool) -> bool:
+        return False
+
+    def list_output_devices(self) -> list[AudioDevice]:
+        return []
+
+    def set_output_device(self, device_id: str) -> bool:
         return False
 
 
@@ -43,9 +60,9 @@ def set_audio_driver(driver: AudioDriverBase | None) -> None:
 def get_audio_driver() -> AudioDriverBase:
     global _AUDIO_DRIVER, _AUDIO_DRIVER_NAME
 
-    chosen = str(get_device_driver_name("audio", fallback="simulated")).strip().lower() or "simulated"
+    chosen = str(get_device_driver_name("audio")).strip().lower() or "none"
     with _AUDIO_DRIVER_LOCK:
-        if _AUDIO_DRIVER is not None and _AUDIO_DRIVER_NAME == chosen:
+        if _AUDIO_DRIVER is not None and (_AUDIO_DRIVER_NAME is None or _AUDIO_DRIVER_NAME == chosen):
             return _AUDIO_DRIVER
 
         _AUDIO_DRIVER = _create_driver(chosen)
@@ -57,6 +74,10 @@ def _create_driver(name: str) -> AudioDriverBase:
     module_name = {
         "none": "drivers.audio.none",
         "simulated": "drivers.audio.simulated",
+        "linux": "drivers.audio.linux",
+        "pipewire": "drivers.audio.linux",
+        "pulse": "drivers.audio.linux",
+        "pulseaudio": "drivers.audio.linux",
     }.get(str(name or "").strip().lower(), "drivers.audio.none")
 
     try:
@@ -99,12 +120,59 @@ def set_muted(muted: bool) -> bool:
         return False
 
 
+def list_audio_output_devices() -> list[AudioDevice]:
+    try:
+        devices = get_audio_driver().list_output_devices()
+        normalized = [_normalize_device(d) for d in list(devices or [])]
+        return [device for device in normalized if device.id]
+    except Exception:
+        return []
+
+
+def list_output_devices() -> list[AudioDevice]:
+    return list_audio_output_devices()
+
+
+def set_output_device(device_id: str) -> bool:
+    try:
+        clean_id = str(device_id or "").strip()
+        if not clean_id:
+            return False
+        return bool(get_audio_driver().set_output_device(clean_id))
+    except Exception:
+        return False
+
+
+def _normalize_device(device: AudioDevice | dict) -> AudioDevice:
+    if isinstance(device, dict):
+        device = AudioDevice(
+            id=str(device.get("id") or ""),
+            name=str(device.get("name") or ""),
+            description=device.get("description"),
+            is_default=bool(device.get("is_default", False)),
+        )
+
+    device_id = str(device.id or "").strip()
+    name = str(device.name or device_id).strip()
+    description = str(device.description).strip() if device.description else None
+
+    return AudioDevice(
+        id=device_id,
+        name=name,
+        description=description,
+        is_default=bool(device.is_default),
+    )
+
+
 def _normalize_info(info: AudioInfo | dict) -> AudioInfo:
     if isinstance(info, dict):
         info = AudioInfo(
             volume_percent=info.get("volume_percent"),
             muted=info.get("muted"),
             output_route=info.get("output_route"),
+            output_device_id=info.get("output_device_id"),
+            output_device_name=info.get("output_device_name"),
+            output_devices=tuple(info.get("output_devices") or ()),
             driver=str(info.get("driver") or "unknown"),
         )
 
@@ -112,9 +180,25 @@ def _normalize_info(info: AudioInfo | dict) -> AudioInfo:
     if volume is not None:
         volume = max(0, min(100, int(volume)))
 
+    devices = tuple(_normalize_device(d) for d in tuple(info.output_devices or ()))
+    output_device_id = str(info.output_device_id).strip() if info.output_device_id else None
+    output_device_name = str(info.output_device_name).strip() if info.output_device_name else None
+    if not output_device_name and output_device_id:
+        for device in devices:
+            if device.id == output_device_id:
+                output_device_name = device.description or device.name
+                break
+
+    output_route = str(info.output_route).strip() if info.output_route else None
+    if not output_route:
+        output_route = output_device_name
+
     return AudioInfo(
         volume_percent=volume,
         muted=(bool(info.muted) if info.muted is not None else None),
-        output_route=(str(info.output_route) if info.output_route else None),
+        output_route=output_route,
+        output_device_id=output_device_id,
+        output_device_name=output_device_name,
+        output_devices=devices,
         driver=str(info.driver or "unknown"),
     )

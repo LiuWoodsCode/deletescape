@@ -147,6 +147,28 @@ Normalization:
 - all string fields coerced safely,
 - exceptions swallowed at abstraction edge with safe fallbacks.
 
+### 4.5 Audio (`audio.py`)
+
+Primary models:
+
+- `AudioInfo` (volume, mute state, active output route/device)
+- `AudioDevice` (normalized output-device identifier, display name, default state)
+
+Public APIs:
+
+- `get_audio_info() -> AudioInfo`
+- `get_volume() -> int | None`
+- `set_volume(percent) -> bool`
+- `set_muted(muted) -> bool`
+- `list_audio_output_devices() -> list[AudioDevice]`
+- `set_output_device(device_id) -> bool`
+
+Normalization:
+
+- volume percentages clamped to `[0, 100]`,
+- device identifiers and labels coerced safely,
+- exceptions swallowed at abstraction edge with safe fallbacks.
+
 ---
 
 ## 5) What Deletescape Core and Apps Access
@@ -163,6 +185,10 @@ Examples (app-facing shell API methods):
 - `window.list_wifi_profiles()`
 - `window.add_wifi_profile(...)`
 - `window.delete_wifi_profile(...)`
+- `window.get_audio_info()`
+- `window.list_audio_output_devices()`
+- `window.set_audio_volume(...)`
+- `window.set_audio_output_device(...)`
 
 This keeps apps decoupled from driver/module internals.
 
@@ -247,7 +273,8 @@ Abstractions should keep logs lower-volume and focused on selection/fallback eve
     "battery": "winnt",
     "modem": "simulated",
     "location": "simulated",
-    "wifi": "netsh"
+    "wifi": "netsh",
+    "audio": "linux"
   }
 }
 ```

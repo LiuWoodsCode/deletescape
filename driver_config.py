@@ -22,7 +22,7 @@ def _default_driver(component: str) -> str:
     if comp == "display":
         return "none"
     if comp == "audio":
-        return "none"
+        return "linux" if platform.system() == "Linux" else "none"
     if comp == "sensors":
         return "none"
     if comp == "thermals":

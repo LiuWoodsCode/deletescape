@@ -9,7 +9,7 @@
     "location": "simulated",
     "wifi": "netsh",
     "display": "simulated",
-    "audio": "simulated",
+    "audio": "linux",
     "sensors": "simulated",
     "vibration": "simulated",
     "thermals": "none"

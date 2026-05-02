@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from audio import AudioDriverBase, AudioInfo
+from audio import AudioDevice, AudioDriverBase, AudioInfo
 from logger import get_logger
 
 
@@ -23,6 +23,14 @@ class NoneAudioDriver(AudioDriverBase):
 
     def set_muted(self, muted: bool) -> bool:
         log.info("Audio none driver set_muted rejected", extra={"muted": bool(muted)})
+        return False
+
+    def list_output_devices(self) -> list[AudioDevice]:
+        log.debug("Audio none driver list_output_devices requested")
+        return []
+
+    def set_output_device(self, device_id: str) -> bool:
+        log.info("Audio none driver set_output_device rejected", extra={"device_id": str(device_id or "")})
         return False
 
 

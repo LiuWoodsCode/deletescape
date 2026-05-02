@@ -16,6 +16,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QFrame,
     QHBoxLayout,
@@ -36,6 +37,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from audio import (
+    get_audio_info,
+    list_audio_output_devices,
+    set_muted,
+    set_output_device,
+    set_volume,
+)
 from battery import get_battery_info
 from app_registry import AppDescriptor, discover_apps
 from config import DeviceConfigStore, OSBuildConfigStore
@@ -875,6 +883,40 @@ class SettingsWindow(QMainWindow):
         slider.setValue(value)
         return slider
 
+    def _make_combo_box(self) -> QComboBox:
+        combo = QComboBox()
+        combo.setFixedHeight(36)
+        combo.setStyleSheet(
+            f"""
+            QComboBox {{
+                background: {qcolor_css(PANEL2)};
+                border: 1px solid {qcolor_css(DIVIDER)};
+                color: {qcolor_css(TEXT)};
+                border-radius: 2px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }}
+            QComboBox:hover {{
+                border: 1px solid {qcolor_css(MUTED)};
+            }}
+            QComboBox:focus {{
+                border: 1px solid {qcolor_css(ACCENT)};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 28px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: {qcolor_css(PANEL2)};
+                color: {qcolor_css(TEXT)};
+                selection-background-color: {qcolor_css(ACCENT)};
+                selection-color: {qcolor_css(TEXT)};
+                border: 1px solid {qcolor_css(DIVIDER)};
+            }}
+            """
+        )
+        return combo
+
     def _add_info_rows(self, layout: QVBoxLayout, rows: List[tuple[str, str]]) -> None:
         for label, value in rows:
             layout.addWidget(InfoRow(f"{label}:", value if value else "-"))
@@ -1544,10 +1586,155 @@ class SettingsWindow(QMainWindow):
 
     def _make_system_audio(self) -> QWidget:
         def build(c: QVBoxLayout) -> None:
+            def _host_or_module(name: str, fallback):
+                fn = getattr(self.host_window, name, None) if self.host_window is not None else None
+                return fn if callable(fn) else fallback
+
+            syncing = {"active": False}
+
             c.addWidget(SubHeading("Volume"))
-            c.addWidget(self._make_slider(50))
+
+            volume_row = QWidget()
+            volume_layout = QHBoxLayout(volume_row)
+            volume_layout.setContentsMargins(0, 0, 0, 0)
+            volume_layout.setSpacing(10)
+
+            volume_slider = self._make_slider(0)
+            volume_value = QLabel("0%")
+            volume_value.setMinimumWidth(42)
+            volume_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            volume_value.setStyleSheet(f"color: {qcolor_css(TEXT)}; font-size: 14px;")
+
+            volume_layout.addWidget(volume_slider, 1)
+            volume_layout.addWidget(volume_value, 0, Qt.AlignVCenter)
+            c.addWidget(volume_row)
+
+            mute = self._make_checkbox("Mute", False)
+            c.addWidget(mute)
+
+            c.addWidget(SubHeading("Output device"))
+            device_combo = self._make_combo_box()
+            c.addWidget(device_combo)
+
+            status = QLabel("")
+            status.setWordWrap(True)
+            status.setStyleSheet(f"color: {qcolor_css(MUTED)}; font-size: 12px;")
+            c.addWidget(status)
+
+            refresh_btn = self._make_button("Refresh")
+            c.addWidget(refresh_btn)
             c.addWidget(self._make_checkbox("Vibration Enabled", True))
             c.addWidget(self._make_button("Ringtone (Default)"))
+
+            def _device_label(device) -> str:
+                return str(getattr(device, "description", None) or getattr(device, "name", None) or getattr(device, "id", "") or "Unknown output")
+
+            def _set_status(message: str = "") -> None:
+                status.setText(str(message or ""))
+
+            def _refresh_audio(message: str = "") -> None:
+                info_fn = _host_or_module("get_audio_info", get_audio_info)
+                list_fn = _host_or_module("list_audio_output_devices", list_audio_output_devices)
+
+                syncing["active"] = True
+                try:
+                    info = info_fn()
+                    devices = list(list_fn() or [])
+                    if not devices:
+                        devices = list(getattr(info, "output_devices", ()) or [])
+
+                    volume = getattr(info, "volume_percent", None)
+                    if volume is None:
+                        volume_slider.setEnabled(False)
+                        volume_slider.setValue(0)
+                        volume_value.setText("--")
+                    else:
+                        volume_slider.setEnabled(True)
+                        volume_slider.setValue(max(0, min(100, int(volume))))
+                        volume_value.setText(f"{int(volume_slider.value())}%")
+
+                    muted = getattr(info, "muted", None)
+                    mute.setEnabled(muted is not None)
+                    mute.setChecked(bool(muted) if muted is not None else False)
+
+                    device_combo.clear()
+                    active_id = str(getattr(info, "output_device_id", "") or "")
+                    active_name = str(getattr(info, "output_device_name", "") or getattr(info, "output_route", "") or "")
+                    selected_index = -1
+
+                    for device in devices:
+                        device_id = str(getattr(device, "id", "") or "")
+                        if not device_id:
+                            continue
+                        device_combo.addItem(_device_label(device), device_id)
+                        combo_index = device_combo.count() - 1
+                        if bool(getattr(device, "is_default", False)) or (active_id and device_id == active_id):
+                            selected_index = combo_index
+
+                    if device_combo.count() == 0 and active_name:
+                        device_combo.addItem(active_name, active_id)
+                        selected_index = 0
+
+                    if device_combo.count() == 0:
+                        device_combo.addItem("No output devices found", "")
+                        device_combo.setEnabled(False)
+                    else:
+                        device_combo.setEnabled(True)
+                        if selected_index >= 0:
+                            device_combo.setCurrentIndex(selected_index)
+
+                    driver = str(getattr(info, "driver", "unknown") or "unknown")
+                    route = active_name or (device_combo.currentText() if device_combo.isEnabled() else "")
+                    parts = [f"Driver: {driver}"]
+                    if route:
+                        parts.append(f"Output: {route}")
+                    if message:
+                        parts.append(message)
+                    _set_status(" • ".join(parts))
+                except Exception:
+                    log.exception("Failed to refresh audio settings")
+                    volume_slider.setEnabled(False)
+                    mute.setEnabled(False)
+                    device_combo.setEnabled(False)
+                    _set_status("Audio information is unavailable.")
+                finally:
+                    syncing["active"] = False
+
+            def _set_volume(value: int) -> None:
+                volume_value.setText(f"{int(value)}%")
+                if syncing["active"]:
+                    return
+                volume_fn = _host_or_module("set_audio_volume", set_volume)
+                ok = bool(volume_fn(int(value)))
+                if not ok:
+                    _set_status("Volume change failed.")
+
+            def _set_muted(checked: bool) -> None:
+                if syncing["active"]:
+                    return
+                mute_fn = _host_or_module("set_audio_muted", set_muted)
+                ok = bool(mute_fn(bool(checked)))
+                if not ok:
+                    _set_status("Mute change failed.")
+                else:
+                    _refresh_audio("Mute updated.")
+
+            def _set_device(index: int) -> None:
+                if syncing["active"] or index < 0:
+                    return
+                device_id = str(device_combo.itemData(index) or "")
+                if not device_id:
+                    return
+                output_fn = _host_or_module("set_audio_output_device", set_output_device)
+                ok = bool(output_fn(device_id))
+                _refresh_audio("Output changed." if ok else "Output change failed.")
+
+            volume_slider.valueChanged.connect(_set_volume)
+            mute.toggled.connect(_set_muted)
+            device_combo.currentIndexChanged.connect(_set_device)
+            refresh_btn.clicked.connect(lambda: _refresh_audio())
+
+            _refresh_audio()
 
         p = SimpleTestPage("Audio", build)
         p.backRequested.connect(lambda: self._go("section.system"))

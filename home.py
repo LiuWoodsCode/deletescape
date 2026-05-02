@@ -10,6 +10,15 @@ from pathlib import Path
 from datetime import datetime
 
 from battery import get_battery_info
+from audio import (
+    AudioDevice,
+    AudioInfo,
+    get_audio_info,
+    list_audio_output_devices,
+    set_muted as set_audio_muted,
+    set_output_device as set_audio_output_device,
+    set_volume as set_audio_volume,
+)
 from telephony import get_signal_strength
 from location import LocationInfo, get_location_info
 from wifi import (
@@ -1951,6 +1960,49 @@ class Deletescape(QMainWindow):
 
         dcim_dir = get_user_data_layout(Path(__file__).resolve().parent).user_dcim
         return request_photo_from_gallery(self, dcim_dir=dcim_dir, title=title, instruction=instruction)
+
+    # ---------------------------------------------------------
+    # App API: audio output
+    # ---------------------------------------------------------
+    def get_audio_info(self) -> AudioInfo:
+        """Return best-effort volume, mute, and output-device state for apps."""
+
+        try:
+            return get_audio_info()
+        except Exception:
+            return AudioInfo()
+
+    def list_audio_output_devices(self) -> list[AudioDevice]:
+        """Return output devices from the active audio driver."""
+
+        try:
+            return list_audio_output_devices()
+        except Exception:
+            return []
+
+    def set_audio_volume(self, percent: int) -> bool:
+        """Set output volume through the active audio driver."""
+
+        try:
+            return bool(set_audio_volume(percent))
+        except Exception:
+            return False
+
+    def set_audio_muted(self, muted: bool) -> bool:
+        """Set output mute through the active audio driver."""
+
+        try:
+            return bool(set_audio_muted(muted))
+        except Exception:
+            return False
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        """Select the active output device through the active audio driver."""
+
+        try:
+            return bool(set_audio_output_device(device_id))
+        except Exception:
+            return False
 
     # ---------------------------------------------------------
     # App API: location / GPS

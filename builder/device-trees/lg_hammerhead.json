@@ -10,8 +10,9 @@
     "location": "none",
     "wifi": "nmcli",
     "display": "none",
-    "audio": "none",
+    "audio": "linux",
     "sensors": "none",
-    "vibration": "none"
+    "vibration": "none",
+    "thermals": "none"
   }
 }

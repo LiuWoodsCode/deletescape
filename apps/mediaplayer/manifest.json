@@ -1,0 +1,9 @@
+{
+  "appId": "mediaplayer",
+  "bundleId": "com.deletescapeos.mediaplayer",
+  "displayName": "Media Player",
+  "file_handlers": [".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi"],
+  "build": 1,
+  "version": "0.1.0",
+  "permissions": []
+}

@@ -29,7 +29,7 @@ class App(QObject):
         self._apps_per_page = 20
         self._grid_margin_x = 18
         self._grid_margin_top = 18
-        self._grid_spacing_x = 12
+        self._grid_spacing_x = 16
         self._grid_spacing_y = 14
         self._label_font_size_pt = 9
         self._icon_px = 72

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QStackedLayout,
 )
-from PySide6.QtCore import QEvent, QObject, Qt, QSize
+from PySide6.QtCore import QEvent, QObject, Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QFontMetrics
 
 from wallpaper import load_pixmap, scale_crop_center
@@ -38,6 +38,8 @@ class App(QObject):
         self._current_page = 0
         self._page_buttons: list[list[QToolButton]] = []
         self._dot_labels: list[QLabel] = []
+        self._icon_cache: dict[tuple[str, int], QIcon] = {}
+        self._wallpaper_render_scheduled = False
 
         self._wallpaper_pix = None
         # Stack the wallpaper behind the UI so it always renders.
@@ -139,7 +141,7 @@ class App(QObject):
 
         # Apply max row limit
         if self._max_grid_cols is not None:
-            cols = min(rows, self._max_grid_cols)
+            cols = min(cols, self._max_grid_cols)
 
         new_capacity = int(cols * rows)
 
@@ -164,11 +166,21 @@ class App(QObject):
         return []
 
     def _make_rounded_icon(self, icon_path: str | None, size_px: int) -> QIcon:
+        cache_key = (str(icon_path or ''), int(size_px))
+        cached = self._icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if not icon_path:
-            return self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            icon = self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            self._icon_cache[cache_key] = icon
+            return icon
+
         pix = QPixmap(str(icon_path))
         if pix.isNull():
-            return self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            icon = self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            self._icon_cache[cache_key] = icon
+            return icon
 
         target = QSize(size_px, size_px)
         scaled = pix.scaled(target, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
@@ -188,7 +200,9 @@ class App(QObject):
         painter.drawPixmap(0, 0, cropped)
         painter.end()
 
-        return QIcon(out)
+        icon = QIcon(out)
+        self._icon_cache[cache_key] = icon
+        return icon
 
     def _find_app_by_id(self, app_id: str):
             """Return the first visible app matching app_id, else None."""
@@ -205,7 +219,6 @@ class App(QObject):
     
     def _make_app_button(self, app, *, icon_px: int, show_label: bool) -> QWidget:
         wrapper = QWidget(self._fg)
-        icon_px = self._icon_px
         lay = QVBoxLayout()
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
@@ -345,6 +358,16 @@ class App(QObject):
         """Dock removed for now (kept for compatibility)."""
         return QColor(0, 0, 0, 0)
 
+    def _schedule_wallpaper_render(self) -> None:
+        if self._wallpaper_render_scheduled:
+            return
+        self._wallpaper_render_scheduled = True
+        QTimer.singleShot(0, self._flush_wallpaper_render)
+
+    def _flush_wallpaper_render(self) -> None:
+        self._wallpaper_render_scheduled = False
+        self._render_wallpaper()
+
     def _apply_styles(self) -> None:
         # Transparent surfaces over wallpaper.
         self._fg.setStyleSheet('background: transparent;')
@@ -407,7 +430,7 @@ class App(QObject):
     def eventFilter(self, obj, event):
         if obj is self._fg and event.type() == QEvent.Resize:
             self._recompute_grid_capacity()
-            self._render_wallpaper()
+            self._schedule_wallpaper_render()
             return super().eventFilter(obj, event)
         if obj is self._fg and event.type() == QEvent.Wheel:
             # Simple paging like iOS: scroll to change pages.
@@ -428,7 +451,7 @@ class App(QObject):
             self._wallpaper_pix = load_pixmap(path)
         except Exception:
             self._wallpaper_pix = None
-        self._render_wallpaper()
+        self._schedule_wallpaper_render()
         # Re-apply styles in case dark mode changed.
         try:
             self._apply_styles()

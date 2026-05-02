@@ -7,7 +7,7 @@
     "battery": "upower",
     "modem": "simulated",
     "location": "simulated",
-    "wifi": "netsh",
+    "wifi": "nmcli",
     "display": "simulated",
     "audio": "linux",
     "sensors": "simulated",

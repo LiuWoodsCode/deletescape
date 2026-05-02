@@ -258,19 +258,22 @@ class NotificationCenter:
     
     def save_notification(self, n):
         # Load existing history or start a new list
-        HISTORY_FILE = Path("./userdata/Data/System/notifications.json")
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r") as f:
-                history = json.load(f)
-        else:
-            history = []
+        try:
+            HISTORY_FILE = Path("./userdata/Data/System/notifications.json")
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, "r") as f:
+                    history = json.load(f)
+            else:
+                history = []
 
-        # Append the notification as a dict
-        history.append(n.__dict__)
+            # Append the notification as a dict
+            history.append(n.__dict__)
 
-        # Save it back
-        with open(HISTORY_FILE, "w") as f:
-            json.dump(history, f, indent=4)
+            # Save it back
+            with open(HISTORY_FILE, "w") as f:
+                json.dump(history, f, indent=4)
+        except Exception as e:
+            print(e.with_traceback)
 
     def notify(self, *, title: str, message: str = "", duration_ms: int = 3500, app_id: str = "") -> None:
         log.debug(

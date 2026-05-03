@@ -12,7 +12,8 @@ _WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 _USER_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "userdata" / "Data" / "Application" / "crimew"
 _CONFIG_PATH = _USER_DATA_DIR / "settings.json"
 _FLAGS_PATH = os.path.join(_WORKSPACE_DIR, "data", "flags.json")
-print(f"Paths:\nWorkspace: {_WORKSPACE_DIR}\nUserData: {_USER_DATA_DIR}\nConfig: {_CONFIG_PATH}\nFlags: {_FLAGS_PATH}")
+_MANIFEST_PATH = os.path.join(_WORKSPACE_DIR, "manifest.json")
+print(f"Paths:\nWorkspace: {_WORKSPACE_DIR}\nUserData: {_USER_DATA_DIR}\nConfig: {_CONFIG_PATH}\nFlags: {_FLAGS_PATH}\nManifest: {_MANIFEST_PATH}")
 
 # -------------------------
 # Internal Caches
@@ -31,6 +32,9 @@ def get_user_data_dir() -> Path:
     _USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     return _USER_DATA_DIR
 
+def get_app_version() -> str:
+    with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)["version"]
 
 # -------------------------
 # Config Handling

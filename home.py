@@ -306,6 +306,13 @@ class StatusBarWidget(QWidget):
             return
 
         pct = int(percentage)
+        # Weird issue with upower, if a battery is not present
+        # then it will show up as 0%
+        if pct == 0:
+            self._warned_low_20 = False
+            self._warned_critical_10 = False
+            return
+        
         charging = True if is_charging is True else False
 
         # If we are charging, don't nag, and allow warnings again on the next discharge cycle.

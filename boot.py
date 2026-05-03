@@ -18,6 +18,7 @@ from app_health import install_exception_hooks
 
 from config import ConfigStore, OSBuildConfigStore
 from fs_layout import migrate_legacy_user_data
+from kangel import KAngelManager, load_kangel_enabled
 
 from logger import configure as configure_logging
 from logger import get_logger, install_qt_message_handler
@@ -169,6 +170,12 @@ Not connected to a network!
                 description = f"""
 {header}
 Your IP address is {wlan_ip}
+"""
+            kangel_info = bug.get("kangel") or {}
+            kangel_running = bool(kangel_info.get("running", False))
+            if kangel_running:
+                kangel_addresses = ", ".join(kangel_info.get("addresses") or []) or wlan_ip or "unknown"
+                description += f"""KAngel SSH is listening on tcp/{kangel_info.get("port", 2222)}
 """
             host = platform.node()
             now = datetime.datetime.now().isoformat()
@@ -412,12 +419,22 @@ def main():
     install_qt_message_handler()
     log = get_logger("boot")
     base_dir = Path(__file__).resolve().parent
+    kangel_manager = KAngelManager(base_dir=base_dir, logger=log)
 
     try:
         result = migrate_legacy_user_data(base_dir)
         log.info("Userdata layout initialized", extra=result)
     except Exception:
         log.exception("Failed to initialize userdata layout")
+
+    try:
+        kangel_enabled = load_kangel_enabled(base_dir)
+        if kangel_enabled:
+            kangel_manager.ensure_started()
+        else:
+            log.info("KAngel disabled by configuration")
+    except Exception:
+        log.exception("Failed to initialize KAngel")
 
     # Environment fingerprint (useful for debugging). Kept early so it includes failures during startup.
     try:
@@ -481,6 +498,9 @@ def main():
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
     os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
+    os_instance.kangel_manager = kangel_manager
+    kangel_manager.attach_host_window(os_instance)
+    kangel_manager.set_recovery_info(None)
     os_instance.show()
 
     splash_dir = base_dir / "splash"
@@ -596,7 +616,7 @@ def main():
             self.finished.emit(ok, reason, details)
 
     class BootCheckResultHandler(QObject):
-        def __init__(self, *, movie: QMovie, label: QLabel, splash_label: QLabel, preload_view, os_instance: Deletescape, splash_dir: Path, args, log, app: QApplication):
+        def __init__(self, *, movie: QMovie, label: QLabel, splash_label: QLabel, preload_view, os_instance: Deletescape, splash_dir: Path, args, log, app: QApplication, kangel_manager: KAngelManager):
             super().__init__()
             self._movie = movie
             self._throbber_label = label
@@ -607,6 +627,7 @@ def main():
             self._args = args
             self._log = log
             self._app = app
+            self._kangel_manager = kangel_manager
 
         def _dispose_preload_view(self) -> None:
             if self._preload_view is None:
@@ -632,6 +653,11 @@ def main():
                 msg = f"init check failure: {reason}"
                 self._log.error(msg)
                 self._log.info("Device is now in recovery mode.")
+                details = dict(details or {})
+                if self._kangel_manager.is_running():
+                    details["kangel"] = self._kangel_manager.status_snapshot()
+                self._kangel_manager.attach_host_window(None)
+                self._kangel_manager.set_recovery_info(details)
                 recovery_img = _resolve_splash_asset(self._splash_dir / "recovery.png")
                 try:
                     self._app.setQuitOnLastWindowClosed(False)
@@ -651,6 +677,8 @@ def main():
                 if not recovery_img.exists():
                     self._log.error("Recovery splash missing", extra={"path": str(recovery_img)})
             else:
+                self._kangel_manager.attach_host_window(self._os_instance)
+                self._kangel_manager.set_recovery_info(None)
                 self._splash_label.setVisible(False)
                 install_exception_hooks(self._os_instance.report_app_crash)
                 self._os_instance.show_startup_lock_screen()
@@ -671,6 +699,7 @@ def main():
         args=args,
         log=log,
         app=app,
+        kangel_manager=kangel_manager,
     )
     worker.finished.connect(result_handler.handle)
     worker_thread.started.connect(worker.run)

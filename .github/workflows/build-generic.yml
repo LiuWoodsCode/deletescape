@@ -2,13 +2,9 @@ name: Build Generic RootFS + OTA
 
 on:
   push:
-    branches:
-      - main
   pull_request:
-    branches:
-      - main
   workflow_dispatch:
-
+    
 jobs:
   build-generic:
     runs-on: ubuntu-latest

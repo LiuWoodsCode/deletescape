@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
 	QCheckBox,
 	QComboBox,
 	QFrame,
-	QGraphicsOpacityEffect,
 	QHBoxLayout,
 	QLabel,
 	QLineEdit,
@@ -612,14 +611,11 @@ class InWindowDialog(QWidget):
 		cancel_text: str = "Cancel",
 	):
 		super().__init__(parent)
-		self.setAttribute(Qt.WA_StyledBackground, True)
-		self.setStyleSheet(f"background: rgba(0, 0, 0, 0.80);")
+		self.setAttribute(Qt.WA_StyledBackground, False)
 		self.setGeometry(parent.rect())
 		self._closing = False
-		self._opacity_effect = QGraphicsOpacityEffect(self)
-		self._opacity_effect.setOpacity(1.0)
-		self.setGraphicsEffect(self._opacity_effect)
-		self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+		self._overlay_opacity = 0.0
+		self._fade_anim = QPropertyAnimation(self, b"overlayOpacity", self)
 		self._fade_anim.setDuration(160)
 		self._fade_anim.setEasingCurve(QEasingCurve.InOutQuad)
 		self._fade_anim.finished.connect(self._on_fade_finished)
@@ -698,6 +694,22 @@ class InWindowDialog(QWidget):
 			self.setGeometry(self.parentWidget().rect())
 		return super().eventFilter(watched, event)
 
+	def paintEvent(self, event):
+		painter = QPainter(self)
+		painter.setRenderHint(QPainter.Antialiasing, False)
+		scrim = QColor(0, 0, 0, int(round(204 * self._overlay_opacity)))
+		painter.fillRect(self.rect(), scrim)
+		painter.end()
+
+	def get_overlay_opacity(self) -> float:
+		return self._overlay_opacity
+
+	def set_overlay_opacity(self, value: float) -> None:
+		self._overlay_opacity = max(0.0, min(1.0, float(value)))
+		self.update()
+
+	overlayOpacity = Property(float, get_overlay_opacity, set_overlay_opacity)
+
 	def set_title(self, title: str) -> None:
 		self._title.setText(title)
 
@@ -726,7 +738,7 @@ class InWindowDialog(QWidget):
 		self.setGeometry(self.parentWidget().rect())
 		self._closing = False
 		self._fade_anim.stop()
-		self._opacity_effect.setOpacity(0.0)
+		self.set_overlay_opacity(0.0)
 		self.raise_()
 		self.show()
 		self._fade_anim.setStartValue(0.0)
@@ -738,7 +750,7 @@ class InWindowDialog(QWidget):
 			return
 		self._closing = True
 		self._fade_anim.stop()
-		self._fade_anim.setStartValue(self._opacity_effect.opacity())
+		self._fade_anim.setStartValue(self._overlay_opacity)
 		self._fade_anim.setEndValue(0.0)
 		self._fade_anim.start()
 

@@ -11,11 +11,13 @@ from browser import Browser  # Uses the existing browser module (no UI embedded 
 try:
     from logger import get_logger
     log = get_logger("crimew")
+    is_deletescape = True
 except:
     if __name__ == "__main__":
         import logging
         logging.basicConfig(level=logging.DEBUG)
         log = logging.getLogger("crimew")
+        is_deletescape = False
 class App(QObject):
     """
     Wrapper App for the Simple Browser example that:

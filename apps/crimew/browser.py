@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, Qt, Slot
 
 from downloadmanagerwidget import DownloadManagerWidget
 from browserwindow import BrowserWindow
+import flags
 
 
 class Browser(QObject):
@@ -26,6 +27,9 @@ class Browser(QObject):
         if not offTheRecord and not self._profile:
             name = "simplebrowser." + qWebEngineChromiumVersion()
             self._profile = QWebEngineProfile(name)
+            user_data_dir = flags.get_user_data_dir()
+            self._profile.setPersistentStoragePath(str(user_data_dir / "Profile"))
+            self._profile.setCachePath(str(user_data_dir / "Cache"))
             s = self._profile.settings()
             s.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
             s.setAttribute(QWebEngineSettings.WebAttribute.DnsPrefetchEnabled, True)

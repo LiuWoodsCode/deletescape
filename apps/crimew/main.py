@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import quote
 from PySide6.QtCore import QObject, Qt, QUrl, QCoreApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
@@ -18,6 +19,37 @@ except:
         logging.basicConfig(level=logging.DEBUG)
         log = logging.getLogger("crimew")
         is_deletescape = False
+
+
+def _build_custom_ntp_url() -> QUrl:
+        return QUrl("about:blank")
+
+
+CUSTOM_NTP_URL = _build_custom_ntp_url()
+
+
+CUSTOM_NTP_HTML = """
+        <!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+        <html>
+        <head>
+            <title>New tab</title>
+            <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body>
+        <h1>Project Crimew</h1>
+        <p>This is the new tab page (NTP) of Project Crimew. This is a work in progress.
+        </body>
+        </html>
+"""
+
+
+def _apply_custom_ntp(tab_widget):
+    web_view = tab_widget.current_web_view()
+    if web_view is not None:
+        web_view.setHtml(CUSTOM_NTP_HTML, CUSTOM_NTP_URL)
+
+
 class App(QObject):
     """
     Wrapper App for the Simple Browser example that:
@@ -63,11 +95,13 @@ class App(QObject):
         self._browser_window = self._browser.create_hidden_window(parent_container=self.container)
         log.debug("Create hidden window")
 
-        # Navigate to initial URL (default "chrome://qt" like the sample)
-        initial = QUrl.fromUserInput(start_url) if start_url else QUrl("chrome://qt")
+        # Navigate to initial URL (default to the custom NTP)
+        if start_url:
+            self._browser_window.tab_widget().set_url(QUrl.fromUserInput(start_url))
+        else:
+            _apply_custom_ntp(self._browser_window.tab_widget())
         self.show()
         try:
-            self._browser_window.tab_widget().set_url(initial)
             log.debug("Set inital url")
         except Exception as e:
             log.error(f"Failed to set initial URL: {e}")
@@ -109,9 +143,14 @@ class App(QObject):
         except Exception as e:
             log.error(f"Navigate failed: {e}")
 
-    def new_tab(self, url: str | QUrl):
-        """Open a new tab with the given URL."""
+    def new_tab(self, url: str | QUrl | None = None):
+        """Open a new tab with the given URL, or the custom NTP when omitted."""
         try:
+            if url is None:
+                self._browser_window.tab_widget().create_tab()
+                _apply_custom_ntp(self._browser_window.tab_widget())
+                return
+
             qurl = QUrl.fromUserInput(url) if isinstance(url, str) else url
             self._browser_window.tab_widget().new_tab(qurl)
         except Exception as e:

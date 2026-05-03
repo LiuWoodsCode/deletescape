@@ -2598,6 +2598,7 @@ class Deletescape(QMainWindow):
 
         crashed_app_id = self.active_app_id
         crashed_name = crashed_app_id or "Unable to get the crashed app name. This is yet another kludge, as an app should not have a name this long. #freetillie"
+        fname = None
         try:
             if crashed_app_id in self.apps:
                 crashed_name = self.apps[crashed_app_id].display_name or crashed_app_id
@@ -2641,6 +2642,21 @@ class Deletescape(QMainWindow):
                 log.exception("Failed to write app panic report. Whoops!")
 
             try:
+                manager = getattr(self, "kangel_manager", None)
+                recorder = getattr(manager, "record_app_crash", None)
+                if callable(recorder):
+                    recorder(
+                        exc_type,
+                        exc,
+                        tb,
+                        app_id=crashed_app_id,
+                        app_name=crashed_name,
+                        report_path=str(fname) if fname is not None else None,
+                    )
+            except Exception:
+                log.exception("Failed to notify KAngel about app crash")
+
+            try:
                 if crashed_name == "Unable to get the crashed app name. This is yet another kludge, as an app should not have a name this long. #freetillie":
 
                     # if we are given this klduge as the app name, assume pre-init
@@ -2657,7 +2673,7 @@ class Deletescape(QMainWindow):
                     QMessageBox.critical(
                         self,
                         "App crashed",
-                        f"{crashed_name} (id: {crashed_app_id if crashed_app_id is not None else ''}) experienced an error and had to be closed.\nA crash dump was saved to {fname}",
+                        f"{crashed_name} (id: {crashed_app_id if crashed_app_id is not None else ''}) experienced an error and had to be closed.\nA crash dump was saved to {fname if fname is not None else '(not saved)'}",
                     )
             except Exception:
                 # something is very wrong

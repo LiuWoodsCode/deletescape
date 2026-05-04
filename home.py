@@ -2110,6 +2110,10 @@ class Deletescape(QMainWindow):
             log.debug("Terminate app: already terminating", extra={"app_id": str(app_id)})
             return
 
+        if app_id == "home":
+            log.debug("Terminate app: we can't kill our homescreen", extra={"app_id": str(app_id)})
+            return
+
         running = self._running_apps.pop(app_id, None)
         if running is None:
             log.debug("Terminate app: not running", extra={"app_id": str(app_id)})

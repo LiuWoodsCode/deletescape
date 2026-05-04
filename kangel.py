@@ -56,13 +56,14 @@ import audio as audio_hal
 import battery as battery_hal
 import display as display_hal
 import location as location_hal
+import media as media_hal
 import sensors as sensors_hal
 import telephony as telephony_hal
 import thermals as thermals_hal
 import vibration as vibration_hal
 import wifi as wifi_hal
 from app_registry import discover_apps
-from config import CONFIG_FILE_NAME, OSBuildConfigStore
+from config import CONFIG_FILE_NAME, DeviceConfigStore, OSBuildConfigStore
 from fs_layout import get_user_data_layout
 
 KANGEL_PORT = 2222
@@ -86,6 +87,9 @@ KANGEL_COMMANDS = (
     "kill",
     "logs",
     "logstream",
+    "media",
+    "button",
+    "screenshot",
     "status",
     "control",
     "crash",
@@ -615,6 +619,23 @@ class KAngelSession:
         topics = ["all", "battery", "telephony", "audio", "display", "sensors", "location", "thermal", "wifi", "vibration", "media"]
         return [item for item in topics if item.startswith(fragment)]
 
+    def _media_completion_candidates(self, fragment: str) -> list[str]:
+        commands = [
+            "active",
+            "callbacks",
+            "clear",
+            "command",
+            "fake",
+            "inspect",
+            "list",
+            "sessions",
+        ]
+        commands.extend(sorted(getattr(media_hal, "MEDIA_COMMANDS", set())))
+        return [item for item in self._dedupe_completions(commands) if item.startswith(fragment)]
+
+    def _button_completion_candidates(self, fragment: str) -> list[str]:
+        return [item for item in ["home", "power"] if item.startswith(fragment)]
+
     def _log_completion_candidates(self, fragment: str) -> list[str]:
         logs_dir = self.manager.base_dir / "logs"
         candidates = ["latest"]
@@ -693,6 +714,10 @@ class KAngelSession:
             replacement, candidates = self._apply_completion_candidates(fragment, self._log_completion_candidates(fragment))
         elif first == "status":
             replacement, candidates = self._apply_completion_candidates(fragment, self._status_completion_candidates(fragment))
+        elif first == "media":
+            replacement, candidates = self._apply_completion_candidates(fragment, self._media_completion_candidates(fragment))
+        elif first == "button":
+            replacement, candidates = self._apply_completion_candidates(fragment, self._button_completion_candidates(fragment))
         else:
             return None, cursor, []
         if replacement is None:
@@ -1287,6 +1312,274 @@ class KAngelSession:
         session = getter() if callable(getter) else None
         return {"active_session": session}
 
+    def _media_debug_snapshot(self, host) -> dict[str, Any]:
+        manager = getattr(host, "media_sessions", None)
+        if manager is None:
+            return {
+                "active_session": None,
+                "sessions": [],
+                "session_order": [],
+                "callbacks": {},
+            }
+
+        sessions_map = getattr(manager, "_sessions", {}) or {}
+        callbacks_map = getattr(manager, "_callbacks", {}) or {}
+        order = list(getattr(manager, "_session_order", []) or [])
+        active = None
+        try:
+            active = manager.active_session()
+        except Exception:
+            active = None
+
+        sessions = []
+        for app_id, session in sorted(sessions_map.items()):
+            sessions.append(_json_safe(session))
+
+        callbacks: dict[str, list[str]] = {}
+        for app_id, callbacks_for_app in callbacks_map.items():
+            callbacks[str(app_id)] = sorted(str(command) for command in (callbacks_for_app or {}).keys())
+
+        return {
+            "active_session": active,
+            "sessions": sessions,
+            "session_order": order,
+            "callbacks": callbacks,
+        }
+
+    def _parse_key_value_payload(self, values: list[str]) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        for value in values:
+            if "=" not in value:
+                payload[str(value)] = True
+                continue
+            key, raw = value.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            lowered = raw.strip().lower()
+            if lowered in {"true", "yes", "on"}:
+                payload[key] = True
+            elif lowered in {"false", "no", "off"}:
+                payload[key] = False
+            else:
+                try:
+                    payload[key] = int(raw)
+                except Exception:
+                    try:
+                        payload[key] = float(raw)
+                    except Exception:
+                        payload[key] = raw
+        return payload
+
+    def _cmd_media(self, arg_text: str) -> None:
+        try:
+            parts = shlex.split(str(arg_text or ""))
+        except Exception as exc:
+            self.writeln(f"invalid arguments: {exc}")
+            return
+
+        action = (parts[0].lower() if parts else "list")
+        args = parts[1:] if parts else []
+
+        if action in {"list", "sessions", "active", "callbacks"}:
+            ok, payload = self._host_call(lambda host: self._media_debug_snapshot(host))
+            if not ok:
+                self.writeln(f"media unavailable: {payload}")
+                return
+
+            if action == "active":
+                self.writeln(_json_dumps(payload.get("active_session")))
+                return
+            if action == "callbacks":
+                self.writeln(_json_dumps(payload.get("callbacks", {})))
+                return
+            self.writeln(_json_dumps(payload))
+            return
+
+        if action == "inspect":
+            if not args:
+                self.writeln("usage: media inspect <app_id>")
+                return
+            app_id = args[0]
+
+            def _inspect(host):
+                snapshot = self._media_debug_snapshot(host)
+                sessions = snapshot.get("sessions") or []
+                for session in sessions:
+                    if str(session.get("app_id", "")) == app_id:
+                        active_session = snapshot.get("active_session")
+                        return {
+                            "session": session,
+                            "callbacks": (snapshot.get("callbacks", {}) or {}).get(app_id, []),
+                            "active": bool(getattr(active_session, "app_id", "") == app_id),
+                        }
+                return None
+
+            ok, payload = self._host_call(_inspect)
+            if not ok:
+                self.writeln(f"media unavailable: {payload}")
+                return
+            if payload is None:
+                self.writeln(f"media session not found: {app_id}")
+                return
+            self.writeln(_json_dumps(payload))
+            return
+
+        if action in {"command", "send"}:
+            if not args:
+                self.writeln("usage: media command <command> [app_id] [key=value ...]")
+                return
+            command = args[0]
+            app_id = None
+            payload_args = args[1:]
+            if payload_args and "=" not in payload_args[0]:
+                app_id = payload_args[0]
+                payload_args = payload_args[1:]
+            payload = self._parse_key_value_payload(payload_args)
+            ok, result = self._host_call(lambda host: bool(host.send_media_command(command, app_id=app_id, **payload)))
+            self.writeln("ok" if ok and result else f"failed: {result}")
+            return
+
+        if action in getattr(media_hal, "MEDIA_COMMANDS", set()):
+            app_id = args[0] if args and "=" not in args[0] else None
+            payload_args = args[1:] if app_id else args
+            payload = self._parse_key_value_payload(payload_args)
+            ok, result = self._host_call(lambda host: bool(host.send_media_command(action, app_id=app_id, **payload)))
+            self.writeln("ok" if ok and result else f"failed: {result}")
+            return
+
+        if action == "clear":
+            if not args:
+                self.writeln("usage: media clear <app_id|all>")
+                return
+            target = args[0]
+
+            def _clear(host):
+                manager = getattr(host, "media_sessions", None)
+                if manager is None:
+                    return {"cleared": []}
+                if target == "all":
+                    app_ids = list((getattr(manager, "_sessions", {}) or {}).keys())
+                else:
+                    app_ids = [target]
+                for app_id in app_ids:
+                    manager.clear_session(app_id)
+                return {"cleared": app_ids}
+
+            ok, payload = self._host_call(_clear)
+            self.writeln(_json_dumps(payload) if ok else f"failed: {payload}")
+            return
+
+        if action == "fake":
+            app_id = args[0] if args else "kangel.debug"
+            title = " ".join(args[1:]).strip() or "KAngel Debug Track"
+
+            def _fake_callback(command: str = "", **payload) -> None:
+                self.manager._broadcast(
+                    f"[KAngel media debug] command={command or '(callback)'} "
+                    f"app_id={app_id} payload={_json_dumps(payload).strip()}"
+                )
+
+            def _fake(host):
+                host.set_media_session(
+                    app_id=app_id,
+                    title=title,
+                    artist="KAngel",
+                    album="Debug Session",
+                    position_ms=0,
+                    duration_ms=180000,
+                    playback_state="playing",
+                    controls={"*": _fake_callback},
+                )
+                return host.get_active_media_session()
+
+            ok, payload = self._host_call(_fake)
+            self.writeln(_json_dumps(payload) if ok else f"failed: {payload}")
+            return
+
+        self.writeln("usage: media [list|active|callbacks|inspect|command|clear|fake]")
+
+    def _cmd_button(self, arg_text: str) -> None:
+        try:
+            parts = shlex.split(str(arg_text or ""))
+        except Exception as exc:
+            self.writeln(f"invalid arguments: {exc}")
+            return
+        if not parts:
+            self.writeln("usage: button <home|power>")
+            return
+
+        action = parts[0].lower()
+        if action not in {"home", "power"}:
+            self.writeln("usage: button <home|power>")
+            return
+
+        def _press(host):
+            handler_name = "_handle_home_button" if action == "home" else "_handle_power_button"
+            handler = getattr(host, handler_name, None)
+            if callable(handler):
+                handler()
+                return True
+            if action == "home":
+                fallback = getattr(host, "go_home", None)
+            else:
+                fallback = getattr(host, "lock_device", None)
+            if callable(fallback):
+                fallback()
+                return True
+            return False
+
+        ok, payload = self._host_call(_press)
+        self.writeln(f"{action} button pressed" if ok and payload else f"button press failed: {payload}")
+
+    def _default_screenshot_path(self) -> Path:
+        state_dir = self.manager._state_dir()
+        screenshots_dir = state_dir / "Screenshots"
+        screenshots_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = _dt.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        return screenshots_dir / f"window_{timestamp}.png"
+
+    def _cmd_screenshot(self, arg_text: str) -> None:
+        try:
+            parts = shlex.split(str(arg_text or ""))
+        except Exception as exc:
+            self.writeln(f"invalid arguments: {exc}")
+            return
+
+        if parts:
+            output_path = Path(parts[0]).expanduser()
+            if not output_path.is_absolute():
+                output_path = self.manager.base_dir / output_path
+        else:
+            output_path = self._default_screenshot_path()
+
+        if output_path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".bmp"}:
+            output_path = output_path.with_suffix(".png")
+
+        def _capture(host):
+            target = getattr(host, "root", None) or host
+            grab = getattr(target, "grab", None)
+            if not callable(grab):
+                raise RuntimeError("host window cannot be grabbed")
+            pixmap = grab()
+            if pixmap is None or pixmap.isNull():
+                raise RuntimeError("screenshot capture returned a blank pixmap")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            ok = bool(pixmap.save(str(output_path)))
+            if not ok:
+                raise RuntimeError(f"failed to save screenshot to {output_path}")
+            return {
+                "path": str(output_path),
+                "width": int(pixmap.width()),
+                "height": int(pixmap.height()),
+            }
+
+        ok, payload = self._host_call(_capture, timeout=10.0)
+        if not ok:
+            self.writeln(f"screenshot failed: {payload}")
+            return
+        self.writeln(f"screenshot saved: {payload.get('path')} ({payload.get('width')}x{payload.get('height')})")
+
     def _collect_status_topic(self, topic: str) -> Any:
         topic = str(topic or "").strip().lower()
         if topic == "battery":
@@ -1527,7 +1820,7 @@ class KAngelSession:
 
     def _cmd_help(self) -> None:
         self.writeln("  help               Show this command list")
-        self.writeln("  info               Show device, build state")
+        self.writeln("  info [os|device]   Show runtime, OS build, and device config")
         self.writeln("  recovery           Show current panic details")
         self.writeln("  apps               List discovered apps")
         self.writeln("  launch <app_id>    Launch an app on the UI thread")
@@ -1539,6 +1832,9 @@ class KAngelSession:
         self.writeln("  logs               List recent log files")
         self.writeln("  logs <name> [n]    Tail a log file")
         self.writeln("  logstream [name]   Follow a log live (Ctrl-C stops)")
+        self.writeln("  media ...          Inspect/debug media sessions and commands")
+        self.writeln("  button <name>      Simulate HOME or POWER button press")
+        self.writeln("  screenshot [path]  Capture the current shell window")
         self.writeln("  status [topic]     Show battery, telephony, audio, and HAL data")
         self.writeln("  control <area> ... Control audio, display, telephony, Wi-Fi, vibration")
         self.writeln("  crash [id]         List or inspect app crashes")
@@ -1550,8 +1846,58 @@ class KAngelSession:
         self.writeln("  clear              Clear the terminal screen")
         self.writeln("  exit               Close the KAngel session")
 
-    def _cmd_info(self) -> None:
+    def _device_config_summary_lines(self, device) -> list[str]:
+        drivers = getattr(device, "drivers", {}) or {}
+        driver_text = ", ".join(f"{key}={value}" for key, value in sorted(drivers.items())) or "(none)"
+        lines = [
+            f"device manufacturer: {getattr(device, 'manufacturer', '') or '(unknown)'}",
+            f"device model: {getattr(device, 'model', '') or '(unknown)'}",
+            f"device model name: {getattr(device, 'model_name', '') or '(unknown)'}",
+            f"device serial: {getattr(device, 'serial_number', '') or '(unset)'}",
+            f"device hardware revision: {getattr(device, 'hardware_revision', '') or '(unset)'}",
+            f"device has hardware home: {bool(getattr(device, 'has_hw_home', False))}",
+            f"device drivers: {driver_text}",
+        ]
+        identifiers = []
+        for label, attr in (("imei", "imei"), ("wifi mac", "wifi_mac"), ("bluetooth mac", "bluetooth_mac")):
+            value = str(getattr(device, attr, "") or "").strip()
+            if value:
+                identifiers.append(f"{label}={value}")
+        if identifiers:
+            lines.append(f"device identifiers: {', '.join(identifiers)}")
+        return lines
+
+    def _os_config_summary_lines(self, build) -> list[str]:
+        builder = ""
+        builder_user = str(getattr(build, "builder_username", "") or "")
+        builder_host = str(getattr(build, "builder_hostname", "") or "")
+        if builder_user or builder_host:
+            builder = f"{builder_user}@{builder_host}".strip("@")
+        return [
+            f"os name: {getattr(build, 'os_name', '') or '(unknown)'}",
+            f"os version: {getattr(build, 'os_version', '') or '(unknown)'}",
+            f"os build number: {getattr(build, 'build_number', '')}",
+            f"os build id: {getattr(build, 'build_id', '') or '(unset)'}",
+            f"os channel: {getattr(build, 'channel', '') or '(unset)'}",
+            f"os builder: {builder or '(unset)'}",
+            f"os build datetime: {getattr(build, 'build_datetime', '') or '(unset)'}",
+        ]
+
+    def _cmd_info(self, arg_text: str = "") -> None:
+        arg_text = str(arg_text or "").strip().lower()
         build = OSBuildConfigStore(base_dir=self.manager.base_dir).load()
+        device = DeviceConfigStore(base_dir=self.manager.base_dir).load()
+
+        if arg_text in {"os", "osconfig", "build"}:
+            self.writeln(_json_dumps(build))
+            return
+        if arg_text in {"device", "deviceconfig", "hardware", "drivers"}:
+            self.writeln(_json_dumps(device))
+            return
+        if arg_text and arg_text not in {"all", "summary"}:
+            self.writeln("usage: info [os|device|all]")
+            return
+
         lines = [
             f"user: {self.username}",
             f"host user: {getpass.getuser()}",
@@ -1563,6 +1909,9 @@ class KAngelSession:
             f"kangel: {'listening' if self.manager.is_running() else 'stopped'} on tcp/{self.manager.port}",
             f"addresses: {', '.join(self.manager.addresses()) or '(none)'}",
         ]
+
+        lines.extend(self._os_config_summary_lines(build))
+        lines.extend(self._device_config_summary_lines(device))
 
         ok, state = self._host_call(
             lambda host: {
@@ -2206,8 +2555,8 @@ class KAngelSession:
         if raw in {"help", "?"}:
             self._cmd_help()
             return True
-        if raw == "info":
-            self._cmd_info()
+        if raw == "info" or raw.startswith("info "):
+            self._cmd_info(raw.partition(" ")[2] if " " in raw else "")
             return True
         if raw == "recovery":
             self._cmd_recovery()
@@ -2238,6 +2587,15 @@ class KAngelSession:
             return True
         if raw == "logstream" or raw.startswith("logstream "):
             self._cmd_logstream(raw.partition(" ")[2] if " " in raw else "")
+            return True
+        if raw == "media" or raw.startswith("media "):
+            self._cmd_media(raw.partition(" ")[2] if " " in raw else "")
+            return True
+        if raw == "button" or raw.startswith("button "):
+            self._cmd_button(raw.partition(" ")[2] if " " in raw else "")
+            return True
+        if raw == "screenshot" or raw.startswith("screenshot "):
+            self._cmd_screenshot(raw.partition(" ")[2] if " " in raw else "")
             return True
         if raw == "status" or raw.startswith("status "):
             self._cmd_status(raw.partition(" ")[2] if " " in raw else "")

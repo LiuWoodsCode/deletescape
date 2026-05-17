@@ -1090,6 +1090,7 @@ class ControlCenterOverlay(QWidget):
 
     def _update_time(self):
         self.time_label.setText(self.window.format_time(datetime.now()))
+        self.date_label.setText(datetime.now().strftime("%Y-%m-%d"))
 
     def mousePressEvent(self, event):
         # Swallow clicks so the paused app doesn't receive them.

@@ -9,8 +9,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QWidget,
     QStackedLayout,
+    QDialog,
 )
-from PySide6.QtCore import QEvent, QObject, Qt, QSize, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QSize, QTimer, QDateTime
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QFontMetrics
 
 from wallpaper import load_pixmap, scale_crop_center
@@ -32,7 +33,7 @@ class App(QObject):
         self._grid_spacing_x = 16
         self._grid_spacing_y = 14
         self._label_font_size_pt = 9
-        self._icon_px = 72
+        self._icon_px = 64
         self._page_dots_height_px = 18
 
         self._current_page = 0
@@ -46,6 +47,11 @@ class App(QObject):
         self._keyboard_focus_visible = False
 
         self._wallpaper_pix = None
+        self._time_label: QLabel | None = None
+        self._settings_panel: QWidget | None = None
+        self._settings_button: QToolButton | None = None
+        self._settings_focused = False
+        self._time_update_timer: QTimer | None = None
         # Stack the wallpaper behind the UI so it always renders.
         stack = QStackedLayout()
         # Show wallpaper + UI at the same time.
@@ -82,6 +88,9 @@ class App(QObject):
         self._root_layout.setSpacing(0)
         self._fg.setLayout(self._root_layout)
 
+        # Top bar with time and settings
+        self._create_top_bar()
+
         # Pages (grid) area.
         self._pages_host = QWidget(self._fg)
         self._pages_layout = QStackedLayout()
@@ -116,6 +125,9 @@ class App(QObject):
         self._recompute_grid_capacity()
         self._apply_styles()
         # self._recompute_button_geometry()
+
+        # Start time update timer
+        self._start_time_update_timer()
 
         self.on_wallpaper_changed()
 
@@ -547,21 +559,56 @@ class App(QObject):
         self._show_keyboard_focus()
         key = event.key()
 
+        # Escape key closes settings and returns to grid
+        if key == Qt.Key_Escape:
+            if self._settings_focused:
+                self._hide_settings_panel()
+                return True
+            return False
+
         if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            if self._settings_focused and self._settings_button is not None:
+                self._show_settings_panel()
+                return True
             self._launch_selected_app()
             return True
+
+        # Handle up arrow - can navigate to settings button
+        if key == Qt.Key_Up:
+            if self._settings_focused:
+                # Move down from settings to top row of grid
+                self._settings_focused = False
+                self._set_selection(self._current_page, 0, focus=True)
+                return True
+            else:
+                current_index = self._current_selection_index()
+                if current_index < self._grid_cols:
+                    # At top row - move to settings button
+                    self._settings_focused = True
+                    if self._settings_button is not None:
+                        self._settings_button.setFocus()
+                    return True
+                else:
+                    # Normal grid navigation
+                    self._move_selection(-1, 0)
+                    return True
+
+        # Handle down arrow
+        if key == Qt.Key_Down:
+            if self._settings_focused:
+                # Settings button is focused, go to grid
+                self._settings_focused = False
+                self._set_selection(self._current_page, 0, focus=True)
+                return True
+            else:
+                self._move_selection(1, 0)
+                return True
 
         if key == Qt.Key_Left:
             self._move_selection(0, -1)
             return True
         if key == Qt.Key_Right:
             self._move_selection(0, 1)
-            return True
-        if key == Qt.Key_Up:
-            self._move_selection(-1, 0)
-            return True
-        if key == Qt.Key_Down:
-            self._move_selection(1, 0)
             return True
 
         if key == Qt.Key_PageUp:
@@ -652,6 +699,137 @@ class App(QObject):
             for tile in page_buttons:
                 tile.setFixedSize(cell_w, cell_h)
 
+    def _create_top_bar(self) -> None:
+        """Create the top bar with time display and settings button."""
+        top_bar = QWidget(self._fg)
+        top_bar.setFixedHeight(72)
+        top_bar.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(28, 12, 28, 12)
+        top_layout.setSpacing(24)
+        top_bar.setLayout(top_layout)
+        
+        # Add stretch on the left to push time and settings to the right
+        top_layout.addStretch()
+        
+        # Time label
+        self._time_label = QLabel()
+        self._time_label.setStyleSheet(
+            'QLabel { color: rgba(255, 255, 255, 235); font-size: 22px; }'
+        )
+        top_layout.addWidget(self._time_label)
+        
+        # Settings button (gear icon)
+        settings_btn = QToolButton(top_bar)
+        settings_btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        settings_btn.setIconSize(QSize(40, 40))
+        settings_btn.setAutoRaise(True)
+        settings_btn.setFocusPolicy(Qt.StrongFocus)
+        settings_btn.setStyleSheet(
+            'QToolButton { background: transparent; border: none; color: rgba(255, 255, 255, 235); outline: none; }'
+            'QToolButton:pressed { color: rgba(255, 255, 255, 255); }'
+            'QToolButton:focus { color: rgba(100, 200, 255, 255); }'
+        )
+        
+        # Create a simple gear icon using Unicode
+        settings_btn.setText('⚙')
+        settings_btn.setFont(QFont())
+        settings_btn.font().setPointSize(22)
+        
+        settings_btn.clicked.connect(self._show_settings_panel)
+        settings_btn.installEventFilter(self)
+        top_layout.addWidget(settings_btn)
+        
+        # Store reference for keyboard navigation
+        self._settings_button = settings_btn
+        
+        # Add top bar to root layout at the top
+        self._root_layout.insertWidget(0, top_bar)
+        
+        # Update time initially
+        self._update_time()
+
+    def _update_time(self) -> None:
+        """Update the time label with current time."""
+        if self._time_label is not None:
+            current_time = QDateTime.currentDateTime()
+            time_text = current_time.toString('h:mm AP')
+            self._time_label.setText(time_text)
+
+    def _start_time_update_timer(self) -> None:
+        """Start or restart the timer that updates the time display."""
+        if self._time_update_timer is None:
+            self._time_update_timer = QTimer(self)
+            self._time_update_timer.timeout.connect(self._update_time)
+        self._time_update_timer.start(1000)  # Update every second
+
+    def _show_settings_panel(self) -> None:
+        """Show the settings panel."""
+        if self._settings_panel is None:
+            self._create_settings_panel()
+        
+        if self._settings_panel is not None:
+            self._settings_focused = True
+            self._settings_panel.show()
+            self._settings_panel.raise_()
+            self._settings_panel.activateWindow()
+
+    def _hide_settings_panel(self) -> None:
+        """Hide the settings panel and return focus to grid."""
+        self._settings_focused = False
+        if self._settings_panel is not None:
+            self._settings_panel.hide()
+        # Return focus to the grid app selection
+        selected_widget = self._selected_widget_for_current_page()
+        if selected_widget is not None:
+            selected_widget.setFocus()
+        else:
+            self._fg.setFocus()
+
+    def _create_settings_panel(self) -> None:
+        """Create the settings panel stub."""
+        try:
+            panel = QWidget(self.container)
+            panel.setWindowTitle("Quick Settings")
+            panel.setGeometry(self.container.width() - 500, 72, 450, 600)
+            panel.setWindowFlags(Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+            
+            panel_layout = QVBoxLayout()
+            panel_layout.setContentsMargins(24, 24, 24, 24)
+            panel_layout.setSpacing(20)
+            
+            # Add placeholder settings
+            settings_title = QLabel("Quick Settings")
+            settings_title_font = QFont()
+            settings_title_font.setPointSize(18)
+            settings_title_font.setBold(True)
+            settings_title.setFont(settings_title_font)
+            settings_title.setStyleSheet('color: rgba(255, 255, 255, 235);')
+            panel_layout.addWidget(settings_title)
+            
+            # Add placeholder items
+            placeholder = QLabel("Settings panel coming soon...")
+            placeholder_font = QFont()
+            placeholder_font.setPointSize(14)
+            placeholder.setFont(placeholder_font)
+            placeholder.setStyleSheet('color: rgba(255, 255, 255, 150);')
+            panel_layout.addWidget(placeholder)
+            
+            panel_layout.addStretch()
+            
+            panel.setLayout(panel_layout)
+            
+            # Style the panel
+            panel.setStyleSheet(
+                'QWidget { background: rgba(20, 20, 20, 220); border-radius: 8px; }'
+                'QLabel { color: rgba(255, 255, 255, 235); }'
+            )
+            
+            self._settings_panel = panel
+        except Exception:
+            pass
+
     def _next_page(self) -> None:
         self._go_to_next_page()
 
@@ -659,6 +837,11 @@ class App(QObject):
         self._go_to_previous_page()
 
     def eventFilter(self, obj, event):
+        # Handle key navigation for settings button
+        if event.type() == QEvent.KeyPress and obj is self._settings_button:
+            if self._handle_key_navigation(event):
+                return True
+        
         if event.type() == QEvent.KeyPress and (obj is self._fg or self._is_tile_widget(obj)):
             if self._handle_key_navigation(event):
                 return True

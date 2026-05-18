@@ -405,6 +405,8 @@ def main():
                         help="Force software rendering")
     parser.add_argument("--kiosk", action="store_true",
                         help="Single app mode (embedded deletescape)")
+    parser.add_argument("--tv", action="store_true",
+                        help="Embedded variant for televisions")
 
     args = parser.parse_args()
 
@@ -497,7 +499,7 @@ def main():
 
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
-    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
+    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk), embedTV=bool(args.tv))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)

@@ -2998,6 +2998,15 @@ class Deletescape(QMainWindow):
         if name not in self.apps:
             log.warning("App does not exist, ignoring", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
             return
+        
+        # Make sure we use the alternate homescreen implementations if needed
+        # Hacky workaround for apps that directly launch home
+        if name == "home":
+            if self.embedTV:
+                name = "tvhome"
+            else:
+                if self.embed:
+                    name = "kioskinfo"
 
         log.info("Launch app", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
 

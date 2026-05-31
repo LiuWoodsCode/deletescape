@@ -239,6 +239,7 @@ class App(QObject):
         btn.setFocusPolicy(Qt.NoFocus)
         btn.setAutoRaise(True)
         btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn.setFixedSize(icon_px + 8, icon_px + 8)
 
         icon = self._make_rounded_icon(getattr(app, 'icon_path', None), icon_px)
         btn.setIcon(icon)
@@ -614,9 +615,10 @@ class App(QObject):
         common_btn_css = (
             'QToolButton { '
             'background: transparent; '
-            'border: none; '
+            'border: 2px solid transparent; '
+            'border-radius: 10px; '
+            'padding: 2px; '
             'color: rgba(255, 255, 255, 235); '
-            'padding: 0px; '
             '}'
             'QToolButton:pressed { '
             'color: rgba(255, 255, 255, 255); '

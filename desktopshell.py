@@ -50,6 +50,20 @@ from taskbar import Taskbar
 log = get_logger("continuity")
 
 
+class _MainThreadDispatcher(QObject):
+    _invoke = Signal(object)
+
+    def __init__(self, parent: QObject | None = None):
+        super().__init__(parent)
+        self._invoke.connect(self._run, type=Qt.QueuedConnection)
+
+    def _run(self, fn) -> None:
+        try:
+            fn()
+        except Exception:
+            pass
+
+
 class NotificationBanner(QFrame):
     """Small transient notification banner used by the desktop shell.
 
@@ -209,6 +223,7 @@ class MdiShell(QMainWindow):
 
         self.apps: dict[str, AppDescriptor] = self.load_apps()
         self._running: dict[str, QMdiSubWindow] = {}
+        self._running_apps = self._running
         
         self._config_store = ConfigStore()
         self.config: OSConfig = self._config_store.load()
@@ -238,7 +253,9 @@ class MdiShell(QMainWindow):
         self._control_center_open = False
         self._handling_crash = False
         self._locked = True
-        self._has_unlocked_once = False
+        self._has_unlocked_once = True
+
+        self._ui_dispatcher = _MainThreadDispatcher(self)
 
         # Background scheduler for apps.
         self.background_tasks = BackgroundTaskManager(window=self)
@@ -294,7 +311,6 @@ class MdiShell(QMainWindow):
         """Show the initial lock screen overlay and log startup timing once."""
         try:
             self._locked = True
-            self._show_lock_overlay(True)
             log.info("Device starts locked")
         except Exception:
             log.exception("Failed to show startup lock screen")
@@ -451,7 +467,7 @@ class MdiShell(QMainWindow):
             app_id = self.active_app_id
         if not app_id:
             return
-        running = self._running_apps.get(app_id)
+        running = self._running.get(app_id)
         if running is None:
             return
 
@@ -485,6 +501,12 @@ class MdiShell(QMainWindow):
             name=name,
             start_immediately=start_immediately,
         )
+
+    def background_tasks_allowed(self) -> bool:
+        return True
+
+    def has_unlocked_once(self) -> bool:
+        return bool(self._has_unlocked_once)
 
     # ---------------------------------------------------------
     # App discovery (same mechanism)
@@ -530,25 +552,23 @@ class MdiShell(QMainWindow):
             if app_class is None:
                 raise RuntimeError("App class could not be loaded")
 
-            sub = QMdiSubWindow()
-            sub.setAttribute(Qt.WA_DeleteOnClose, True)
-
-            # this is the real container the app expects
+            # This is the real container the app expects.
             container = QWidget()
-            sub.setWidget(container)
 
             instance = app_class(window=self, container=container)
+
+            sub = self.mdi.addSubWindow(container)
+            sub.setAttribute(Qt.WA_DeleteOnClose, True)
 
             # Title
             sub.setWindowTitle(desc.display_name or app_id)
 
             # Add to MDI
-            self.mdi.addSubWindow(container)
             container.resize(480, 600)
             container.show()
 
-            # Track running QMdiSubWindow (store sub, not the inner container)
-            self._running[app_id] = container
+            # Track the actual subwindow so activation and cleanup work reliably.
+            self._running[app_id] = sub
 
             # Cleanup tracking on close and refresh taskbar
             def _on_destroy(aid=app_id):

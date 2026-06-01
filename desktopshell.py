@@ -40,7 +40,7 @@ from media import MediaSession, MediaSessionManager
 from notifications import NotificationCenter
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QObject, QThread, Signal, QEvent
-from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap
+from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap, QIcon
 from PySide6.QtCore import QPropertyAnimation
 from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
@@ -1242,6 +1242,11 @@ class MdiShell(QMainWindow):
 
             # Title
             sub.setWindowTitle(desc.display_name or app_id)
+            try:
+                if desc.icon_path:
+                    sub.setWindowIcon(QIcon(str(desc.icon_path)))
+            except Exception:
+                pass
 
             # Add to MDI
             container.resize(480, 600)

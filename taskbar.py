@@ -9,7 +9,7 @@ from datetime import datetime
 class Taskbar(QWidget):
     """A minimal taskbar showing running apps and allowing quick activation.
 
-    This is intentionally simple: it renders a button per running app and
+    This is intentionally simple: it renders an icon button per running app and
     activates the associated MDI subwindow when clicked. If an app isn't
     running it will launch it via the shell.
     """
@@ -27,6 +27,8 @@ class Taskbar(QWidget):
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy())
 
         self._buttons = {}
+        self._task_icon_size = QSize(24, 24)
+        self._task_button_size = QSize(36, 32)
         # Left-most "Apps" button that opens the home app as a frameless panel
         # Icon-only Apps button (Win10-style)
         self._apps_button = QPushButton()
@@ -217,7 +219,7 @@ class Taskbar(QWidget):
         for app_id in running_ids:
             desc = self.shell.apps.get(app_id)
             label = (desc.display_name if desc and getattr(desc, 'display_name', None) else app_id)
-            btn = QPushButton(label)
+            btn = self._make_app_button(app_id, desc, label)
             btn.setCheckable(True)
             btn.setChecked(self.shell.active_app_id == app_id)
             btn.clicked.connect(lambda checked, aid=app_id: self._on_click(aid))
@@ -232,6 +234,48 @@ class Taskbar(QWidget):
 
         # Small spacer to take remaining space on the right
         # Spacer and clock are managed in __init__, nothing more to do here
+
+    def _make_app_button(self, app_id: str, desc, label: str) -> QPushButton:
+        btn = QPushButton()
+        try:
+            btn.setToolTip(label)
+            btn.setAccessibleName(label)
+        except Exception:
+            pass
+
+        icon = QIcon()
+        try:
+            icon_path = getattr(desc, 'icon_path', None) if desc is not None else None
+            if icon_path:
+                icon = QIcon(str(icon_path))
+        except Exception:
+            icon = QIcon()
+
+        try:
+            if not icon.isNull():
+                btn.setIcon(icon)
+                btn.setIconSize(self._task_icon_size)
+            else:
+                btn.setText(label[:1].upper() if label else app_id[:1].upper())
+        except Exception:
+            try:
+                btn.setText(label[:1].upper() if label else app_id[:1].upper())
+            except Exception:
+                pass
+
+        try:
+            btn.setFixedSize(self._task_button_size)
+        except Exception:
+            pass
+        try:
+            btn.setStyleSheet(
+                "QPushButton { border: none; background: transparent; padding: 0px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 28); border-radius: 6px; }"
+                "QPushButton:checked { background: rgba(255, 255, 255, 42); border-radius: 6px; }"
+            )
+        except Exception:
+            pass
+        return btn
 
     def _update_clock(self):
         try:

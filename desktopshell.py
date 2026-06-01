@@ -226,6 +226,7 @@ class MdiShell(QMainWindow):
 
         self.apps: dict[str, AppDescriptor] = self.load_apps()
         self._running: dict[str, QMdiSubWindow] = {}
+        self._running_instances: dict[str, object] = {}
         self._running_apps = self._running
         
         self._config_store = ConfigStore()
@@ -567,11 +568,16 @@ class MdiShell(QMainWindow):
 
             # Track the actual subwindow so activation and cleanup work reliably.
             self._running[app_id] = sub
+            self._running_instances[app_id] = instance
 
             # Cleanup tracking on close and refresh taskbar
             def _on_destroy(aid=app_id):
                 try:
                     self._running.pop(aid, None)
+                except Exception:
+                    pass
+                try:
+                    self._running_instances.pop(aid, None)
                 except Exception:
                     pass
                 try:

@@ -33,6 +33,7 @@ from logger import PROCESS_START, get_logger
 from config import ConfigStore, OSConfig, DeviceConfigStore, DeviceConfig
 from fs_layout import get_user_data_layout
 from app_registry import AppDescriptor, discover_apps, load_app_class, unload_app_modules
+from notifications import NotificationCenter
 
 from PySide6.QtCore import Qt, QTimer, QRectF, QObject, QThread, Signal
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap
@@ -221,6 +222,8 @@ class MdiShell(QMainWindow):
         self._notifications_area.setGeometry(self.rect())
         self._notifications_area.raise_()
 
+        self.notifications = NotificationCenter(window=self, parent=self, banner_height_px=73)
+
         self.apps: dict[str, AppDescriptor] = self.load_apps()
         self._running: dict[str, QMdiSubWindow] = {}
         self._running_apps = self._running
@@ -256,6 +259,8 @@ class MdiShell(QMainWindow):
         self._has_unlocked_once = True
 
         self._ui_dispatcher = _MainThreadDispatcher(self)
+
+        self._sync_notification_geometry()
 
         # Background scheduler for apps.
         self.background_tasks = BackgroundTaskManager(window=self)
@@ -425,30 +430,13 @@ class MdiShell(QMainWindow):
         )
 
         try:
-            # Create a banner and add it to the bottom-right stacked layout.
-            banner = NotificationBanner(title or "", message or "", duration_ms, parent=self._notifications_area)
-
-            # Constrain width so long messages wrap instead of overflowing.
-            try:
-                # Allow banners to occupy up to half the window width, capped
-                # to a sensible maximum for large displays, and with a comfortable
-                # minimum so very small windows still show readable text.
-                max_w = min(640, max(360, int(self.width() * 0.5)))
-            except Exception:
-                max_w = 480
-            banner.setMaximumWidth(max_w)
-            banner.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            # Also allow a reasonable minimum width so short messages don't
-            # produce a tiny, narrow box.
-            try:
-                banner.setMinimumWidth(min(320, max_w))
-            except Exception:
-                pass
-
-            # Add aligned to right; layout alignment set to bottom/right.
-            self._notifications_layout.addWidget(banner, 0, Qt.AlignRight)
-            banner.show()
-            self._notifications_area.raise_()
+            self._sync_notification_geometry()
+            self.notifications.notify(
+                title=title or "",
+                message=message or "",
+                duration_ms=duration_ms,
+                app_id=str(app_id or ""),
+            )
         except Exception:
             log.exception("Failed to show desktop notification", extra={"title": title, "app_id": app_id})
 
@@ -632,9 +620,22 @@ class MdiShell(QMainWindow):
             # Keep notifications overlay sized to the window
             if hasattr(self, '_notifications_area') and self._notifications_area is not None:
                 self._notifications_area.setGeometry(self.rect())
+            self._sync_notification_geometry()
         except Exception:
             pass
         return super().resizeEvent(event)
+
+    def _sync_notification_geometry(self) -> None:
+        try:
+            if not hasattr(self, "notifications") or self.notifications is None:
+                return
+            width = int(self.width())
+            height = int(self.height())
+            if width <= 0 or height <= 0:
+                return
+            self.notifications.set_geometry(x=0, y=max(0, height - 96), width=width)
+        except Exception:
+            pass
 
     def is_setup_completed(self) -> bool:
         return bool(getattr(self.config, "setup_completed", False))

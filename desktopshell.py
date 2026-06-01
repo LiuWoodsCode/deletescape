@@ -160,6 +160,7 @@ class ImageMdiArea(QMdiArea):
 class MdiShell(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.root = self
         self.setWindowTitle("Deletescape MDI Shell (Minimal)")
         self.showFullScreen()
         # self.show()
@@ -617,6 +618,9 @@ class MdiShell(QMainWindow):
 
     def is_setup_completed(self) -> bool:
         return bool(getattr(self.config, "setup_completed", False))
+
+    def report_app_crash(self, exc_type, exc, tb) -> None:
+        log.exception("App crash reported", exc_info=(exc_type, exc, tb))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

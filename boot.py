@@ -551,15 +551,16 @@ def main():
 
     # Install our custom focus filter to show the in-app virtual keyboard.
     if not args.no_virtual_keyboard:
-        try:
-            from input_helper import install_focus_filter  # type: ignore
+        if not args.iron:
+            try:
+                from input_helper import install_focus_filter  # type: ignore
 
-            # Pass the OS root widget so the keyboard is added into the central
-            # content layout (never into QMainWindowLayout directly).
-            install_focus_filter(app, host_widget=os_instance.root)
-            log.info("Installed custom virtual keyboard focus filter")
-        except Exception:
-            log.exception("Failed to install custom virtual keyboard focus filter")
+                # Pass the OS root widget so the keyboard is added into the central
+                # content layout (never into QMainWindowLayout directly).
+                install_focus_filter(app, host_widget=os_instance.root)
+                log.info("Installed custom virtual keyboard focus filter")
+            except Exception:
+                log.exception("Failed to install custom virtual keyboard focus filter")
 
     # Run init checks in a background Qt thread so the UI can remain responsive
     # and we can show an animated throbber while the checks run.

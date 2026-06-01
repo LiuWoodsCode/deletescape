@@ -629,11 +629,14 @@ class MdiShell(QMainWindow):
         try:
             if not hasattr(self, "notifications") or self.notifications is None:
                 return
-            width = int(self.width())
-            height = int(self.height())
-            if width <= 0 or height <= 0:
+            window_width = int(self.width())
+            window_height = int(self.height())
+            if window_width <= 0 or window_height <= 0:
                 return
-            self.notifications.set_geometry(x=0, y=max(0, height - 96), width=width)
+
+            popup_width = max(1, int(window_width * 0.25))
+            popup_x = max(0, window_width - popup_width)
+            self.notifications.set_geometry(x=popup_x, y=0, width=popup_width)
         except Exception:
             pass
 

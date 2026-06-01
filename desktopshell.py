@@ -500,15 +500,25 @@ class MdiShell(QMainWindow):
     # App discovery (same mechanism)
     # ---------------------------------------------------------
     def load_apps(self):
-        # project root = phoneos/phoneos
-        project_root = Path(__file__).resolve().parents[0]
-        builtin_root = project_root / "apps"
+        base_dir = Path(__file__).resolve().parent
+        builtin_apps_root = base_dir / "apps"
+        user_apps_root = get_user_data_layout(base_dir).applications
 
-        if not builtin_root.is_dir():
-            raise RuntimeError(f"Apps root missing: {builtin_root}")
+        log.debug(
+            "Loading apps",
+            extra={"builtin_apps_root": str(builtin_apps_root), "user_apps_root": str(user_apps_root)},
+        )
 
-        return discover_apps(builtin_root)
+        builtins = discover_apps(builtin_apps_root)
+        user_apps = discover_apps(user_apps_root)
 
+        duplicates = set(builtins.keys()) & set(user_apps.keys())
+        if duplicates:
+            log.warning("User app IDs conflict with built-in apps; built-ins take precedence", extra={"app_ids": sorted(duplicates)})
+
+        merged = dict(user_apps)
+        merged.update(builtins)
+        return merged
     # ---------------------------------------------------------
     # Launch app into an MDI subwindow
     # ---------------------------------------------------------

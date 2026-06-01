@@ -63,56 +63,6 @@ class Taskbar(QWidget):
         except Exception:
             pass
         self._layout.addWidget(self._apps_button)
-        # Search box next to Apps (UI only for now)
-        self._search = QLineEdit()
-        try:
-            self._search.setPlaceholderText('Search apps, settings...')
-        except Exception:
-            pass
-        try:
-            self._search.setFixedWidth(200)
-        except Exception:
-            pass
-        try:
-            self._search.setClearButtonEnabled(True)
-        except Exception:
-            pass
-        self._layout.addWidget(self._search)
-        # Dummy Overview button next to search (icon-only)
-        try:
-            self._overview_button = QPushButton()
-            try:
-                self._overview_button.setToolTip('Overview')
-            except Exception:
-                pass
-            try:
-                ov_icon = QIcon('assets/icons/convergance/overview.svg')
-                self._overview_button.setIcon(ov_icon)
-                ov_icon_size = QSize(20, 20)
-                try:
-                    self._overview_button.setIconSize(ov_icon_size)
-                except Exception:
-                    pass
-            except Exception:
-                ov_icon_size = QSize(20, 20)
-            try:
-                self._overview_button.setFlat(True)
-            except Exception:
-                pass
-            try:
-                self._overview_button.setStyleSheet('border: none; background: transparent;')
-            except Exception:
-                pass
-            try:
-                self._overview_button.clicked.connect(self._on_overview_click)
-            except Exception:
-                try:
-                    self._overview_button.clicked.connect(lambda: None)
-                except Exception:
-                    pass
-            self._layout.addWidget(self._overview_button)
-        except Exception:
-            pass
         # Clock label on the right-hand side (time + date stacked)
         self._clock = QLabel("")
         # Slightly wider to accommodate two lines (time + date)

@@ -33,7 +33,7 @@ class App(QObject):
         self._grid_spacing_x = 16
         self._grid_spacing_y = 14
         self._label_font_size_pt = 9
-        self._icon_px = 64
+        self._icon_px = 85
         self._page_dots_height_px = 18
 
         self._current_page = 0
@@ -702,12 +702,13 @@ class App(QObject):
     def _create_top_bar(self) -> None:
         """Create the top bar with time display and settings button."""
         top_bar = QWidget(self._fg)
-        top_bar.setFixedHeight(72)
+        top_bar.setFixedHeight(80)
         top_bar.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         
         top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(28, 12, 28, 12)
+        top_layout.setContentsMargins(28, 0, 28, 0)
         top_layout.setSpacing(24)
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         top_bar.setLayout(top_layout)
         
         # Add stretch on the left to push time and settings to the right
@@ -715,8 +716,9 @@ class App(QObject):
         
         # Time label
         self._time_label = QLabel()
+        self._time_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self._time_label.setStyleSheet(
-            'QLabel { color: rgba(255, 255, 255, 235); font-size: 22px; }'
+            'QLabel { color: rgba(255, 255, 255, 235); font-size: 48px; }'
         )
         top_layout.addWidget(self._time_label)
         

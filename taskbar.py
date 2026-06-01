@@ -126,7 +126,39 @@ class Taskbar(QWidget):
 
         # Add a stretch and then the clock so buttons appear on the left
         self._layout.addStretch(1)
+        self._control_center_button = QPushButton()
+        try:
+            self._control_center_button.setToolTip("Control center")
+        except Exception:
+            pass
+        icon_size = QSize(20, 20)
+        button_size = QSize(32, 32)
+        try:
+            self._control_center_button.setIcon(QIcon('assets/icons/settings/gear.svg'))
+            self._control_center_button.setIconSize(icon_size)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setFlat(True)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; padding: 0px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 28); border-radius: 6px; }"
+            )
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setFixedSize(button_size)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.clicked.connect(self._on_control_center_click)
+        except Exception:
+            pass
         self._layout.addWidget(self._clock)
+        self._layout.addWidget(self._control_center_button)
 
         # Timer to update clock text every second
         self._clock_timer = QTimer(self)
@@ -327,6 +359,18 @@ class Taskbar(QWidget):
         # Dummy handler for the overview button (no-op for now)
         try:
             return
+        except Exception:
+            pass
+
+    def _on_control_center_click(self):
+        try:
+            toggle = getattr(self.shell, 'toggle_control_center', None)
+            if callable(toggle):
+                toggle()
+                return
+            opener = getattr(self.shell, 'open_control_center', None)
+            if callable(opener):
+                opener()
         except Exception:
             pass
 

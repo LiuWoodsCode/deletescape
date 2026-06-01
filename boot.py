@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import time
 import traceback
-from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
+from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 from PySide6.QtGui import QMovie, QFont
 import requests
@@ -391,6 +391,39 @@ def _configure_default_app_font(*, base_dir: Path, app: QApplication, log) -> No
     log.info("Applied bundled default app font", extra={"family": family, "fonts_loaded": len(set(loaded_families))})
 
 
+def _force_fullscreen(window: QMainWindow, *, frameless_fallback: bool = False) -> None:
+    try:
+        window.setWindowState(window.windowState() | Qt.WindowFullScreen)
+        window.showFullScreen()
+        QApplication.processEvents()
+
+        if frameless_fallback:
+            screen = window.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                window.setGeometry(screen.geometry())
+            window.setWindowFlags(window.windowFlags() | Qt.FramelessWindowHint)
+            window.showFullScreen()
+    except Exception:
+        try:
+            window.showFullScreen()
+        except Exception:
+            pass
+
+
+def _show_boot_window(window: QMainWindow, *, full_screen: bool, frameless_fallback: bool = False) -> None:
+    if not full_screen:
+        window.show()
+        return
+
+    window.show()
+    _force_fullscreen(window, frameless_fallback=frameless_fallback)
+    for delay_ms in (0, 100, 500, 1000):
+        QTimer.singleShot(
+            delay_ms,
+            lambda w=window, fallback=frameless_fallback: _force_fullscreen(w, frameless_fallback=fallback),
+        )
+
+
 
 import argparse
 
@@ -505,16 +538,17 @@ def main():
 
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
+    full_screen = bool(args.fullscreen or args.iron)
     if args.iron:
-        os_instance = MdiShell()
+        os_instance = MdiShell(full_screen=full_screen)
         if not hasattr(os_instance, "root"):
             os_instance.root = os_instance
     else:
-        os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk), embedTV=bool(args.tv))
+        os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=full_screen, embed=bool(args.kiosk), embedTV=bool(args.tv))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)
-    os_instance.show()
+    _show_boot_window(os_instance, full_screen=full_screen, frameless_fallback=bool(args.iron))
 
     splash_dir = base_dir / "splash"
 

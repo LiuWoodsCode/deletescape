@@ -647,12 +647,13 @@ class DesktopControlCenter(QFrame):
         self.notification_layout.addStretch(1)
             
 class MdiShell(QMainWindow):
-    def __init__(self):
+    def __init__(self, *, full_screen: bool = False):
         super().__init__()
         self.root = self
         self.setWindowTitle("Deletescape MDI Shell (Minimal)")
-        self.showFullScreen()
-        # self.show()
+        if full_screen:
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            self.setWindowState(self.windowState() | Qt.WindowFullScreen)
         # Central MDI area
         self.mdi = ImageMdiArea(".\\assets\\wallpaper\\test_desktopshell_wal.png")
         self.mdi.setViewMode(QMdiArea.SubWindowView)
@@ -1351,7 +1352,7 @@ class MdiShell(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    shell = MdiShell()
-    # shell.showFullScreen()
+    shell = MdiShell(full_screen=True)
+    shell.showFullScreen()
 
     sys.exit(app.exec())

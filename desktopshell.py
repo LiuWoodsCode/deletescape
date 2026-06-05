@@ -64,6 +64,15 @@ from taskbar import Taskbar
 log = get_logger("continuity")
 
 
+@dataclass
+class RunningApp:
+    app_id: str
+    widget: QWidget
+    instance: object
+    subwindow: QMdiSubWindow
+    background_enabled: bool = False
+
+
 class _MainThreadDispatcher(QObject):
     _invoke = Signal(object)
 
@@ -702,7 +711,7 @@ class MdiShell(QMainWindow):
         self.apps: dict[str, AppDescriptor] = self.load_apps()
         self._running: dict[str, QMdiSubWindow] = {}
         self._running_instances: dict[str, object] = {}
-        self._running_apps = self._running
+        self._running_apps: dict[str, RunningApp] = {}
         
         self._config_store = ConfigStore()
         self.config: OSConfig = self._config_store.load()
@@ -713,6 +722,7 @@ class MdiShell(QMainWindow):
                 "use_24h_time": bool(getattr(self.config, "use_24h_time", True)),
                 "lock_wallpaper": str(getattr(self.config, "lock_wallpaper", "")),
                 "home_wallpaper": str(getattr(self.config, "home_wallpaper", "")),
+                "kangel_enabled": bool(getattr(self.config, "kangel_enabled", False)),
             },
         )
 
@@ -927,6 +937,18 @@ class MdiShell(QMainWindow):
                 self.notifications.set_dark_mode(bool(self.config.dark_mode))
             except Exception:
                 pass
+        if key == 'use_24h_time':
+            try:
+                self.taskbar._update_clock()
+            except Exception:
+                pass
+        if key == 'kangel_enabled':
+            try:
+                manager = getattr(self, "kangel_manager", None)
+                if manager is not None:
+                    manager.update_enabled(bool(value))
+            except Exception:
+                log.exception("Failed to update KAngel state")
         if key in {'lock_wallpaper', 'home_wallpaper'}:
             self.apply_wallpapers()
 
@@ -1143,7 +1165,9 @@ class MdiShell(QMainWindow):
             return
 
         log.info("Background mode updated", extra={"app_id": str(app_id), "enabled": bool(enabled)})
-        running.background_enabled = bool(enabled)
+        running_app = self._running_apps.get(app_id)
+        if running_app is not None:
+            running_app.background_enabled = bool(enabled)
 
     def register_background_task(
         self,
@@ -1312,6 +1336,54 @@ class MdiShell(QMainWindow):
         except Exception:
             pass
 
+    def _get_or_start_app(self, app_id: str) -> RunningApp | None:
+        if app_id in self._running_apps:
+            log.debug("App already running", extra={"app_id": str(app_id)})
+            return self._running_apps[app_id]
+
+        self.launch_app(app_id)
+        return self._running_apps.get(app_id)
+
+    def _terminate_app(self, app_id: str) -> None:
+        log.info("Terminate desktop app", extra={"app_id": str(app_id)})
+        running = self._running_apps.get(app_id)
+        sub = self._running.get(app_id)
+
+        try:
+            if running is not None:
+                hook = getattr(running.instance, "on_quit", None)
+                if callable(hook):
+                    hook()
+        except Exception:
+            log.exception("App on_quit hook failed", extra={"app_id": str(app_id)})
+
+        try:
+            self.media_sessions.clear_session(app_id)
+        except Exception:
+            log.exception("Failed to clear media session for app", extra={"app_id": str(app_id)})
+
+        try:
+            self.background_tasks.cancel_for_app(app_id)
+        except Exception:
+            log.exception("Failed to cancel tasks for app", extra={"app_id": str(app_id)})
+
+        try:
+            if sub is not None:
+                sub.close()
+        except Exception:
+            log.exception("Failed to close desktop app subwindow", extra={"app_id": str(app_id)})
+
+        self._running.pop(app_id, None)
+        self._running_instances.pop(app_id, None)
+        self._running_apps.pop(app_id, None)
+        if self.active_app_id == app_id:
+            self.active_app_id = None
+            self.active_app = None
+        try:
+            self.taskbar.refresh()
+        except Exception:
+            pass
+
     def launch_app(self, app_id: str):
         if app_id not in self.apps:
             QMessageBox.warning(self, "Unknown App", f"No app with id '{app_id}'")
@@ -1355,7 +1427,23 @@ class MdiShell(QMainWindow):
             except Exception:
                 pass
 
-            instance = app_class(window=self, container=container)
+            try:
+                instance = app_class(window=self, container=container)
+            except Exception:
+                log.exception("App constructor failed", extra={"app_id": str(app_id)})
+                try:
+                    sub.close()
+                except Exception:
+                    pass
+                self.active_app_id = app_id
+                self.report_app_crash(*sys.exc_info())
+                return
+
+            try:
+                setattr(instance, "app_id", app_id)
+            except Exception:
+                pass
+
             self._stabilize_embedded_multimedia_widgets(container)
             self._install_embedded_widget_stabilizer(container)
 
@@ -1383,6 +1471,14 @@ class MdiShell(QMainWindow):
             # Track the actual subwindow so activation and cleanup work reliably.
             self._running[app_id] = sub
             self._running_instances[app_id] = instance
+            self._running_apps[app_id] = RunningApp(
+                app_id=app_id,
+                widget=container,
+                instance=instance,
+                subwindow=sub,
+            )
+            self.active_app_id = app_id
+            self.active_app = instance
 
             # Cleanup tracking on close and refresh taskbar
             def _on_destroy(aid=app_id):
@@ -1394,6 +1490,13 @@ class MdiShell(QMainWindow):
                     self._running_instances.pop(aid, None)
                 except Exception:
                     pass
+                try:
+                    self._running_apps.pop(aid, None)
+                except Exception:
+                    pass
+                if self.active_app_id == aid:
+                    self.active_app_id = None
+                    self.active_app = None
                 try:
                     self.taskbar.refresh()
                 except Exception:
@@ -1408,6 +1511,8 @@ class MdiShell(QMainWindow):
                 pass
 
         except Exception as e:
+            self.active_app_id = app_id
+            self.report_app_crash(*sys.exc_info())
             QMessageBox.critical(
                 self,
                 "App Launch Failed",
@@ -1440,6 +1545,11 @@ class MdiShell(QMainWindow):
             active_id = None
 
         self.active_app_id = active_id
+        try:
+            running = self._running_apps.get(active_id) if active_id else None
+            self.active_app = running.instance if running is not None else None
+        except Exception:
+            self.active_app = None
         try:
             self.taskbar.refresh()
         except Exception:
@@ -1475,7 +1585,76 @@ class MdiShell(QMainWindow):
         return bool(getattr(self.config, "setup_completed", False))
 
     def report_app_crash(self, exc_type, exc, tb) -> None:
-        log.exception("App crash reported", exc_info=(exc_type, exc, tb))
+        if self._handling_crash:
+            return
+        self._handling_crash = True
+
+        log.exception(
+            "App crash reported",
+            exc_info=(exc_type, exc, tb),
+            extra={"active_app_id": str(self.active_app_id or "")},
+        )
+
+        crashed_app_id = self.active_app_id
+        crashed_name = crashed_app_id or "Unknown app"
+        fname = None
+        try:
+            if crashed_app_id in self.apps:
+                crashed_name = self.apps[crashed_app_id].display_name or crashed_app_id
+        except Exception:
+            pass
+
+        try:
+            log_dir = Path("./logs")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+            fname = log_dir / f"{crashed_app_id or 'desktop_app'}_{ts}.json"
+            payload = {
+                "timestamp": datetime.now().isoformat(),
+                "app": {
+                    "id": str(crashed_app_id or ""),
+                    "name": str(crashed_name or ""),
+                    "active_app_id": str(self.active_app_id or ""),
+                    "loaded_apps": list(self.apps.keys()),
+                },
+                "exception": {
+                    "type": getattr(exc_type, "__name__", str(exc_type)),
+                    "message": str(exc),
+                    "repr": repr(exc),
+                },
+                "traceback": {
+                    "formatted": traceback.format_exception(exc_type, exc, tb),
+                },
+            }
+            tmp = fname.with_suffix(".tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            tmp.replace(fname)
+        except Exception:
+            log.exception("Failed to write desktop app panic report")
+
+        try:
+            manager = getattr(self, "kangel_manager", None)
+            recorder = getattr(manager, "record_app_crash", None)
+            if callable(recorder):
+                recorder(
+                    exc_type,
+                    exc,
+                    tb,
+                    app_id=crashed_app_id,
+                    app_name=crashed_name,
+                    report_path=str(fname) if fname is not None else None,
+                )
+        except Exception:
+            log.exception("Failed to notify KAngel about app crash")
+
+        try:
+            if crashed_app_id:
+                self._terminate_app(crashed_app_id)
+        except Exception:
+            log.exception("Failed to recover crashed desktop app", extra={"app_id": str(crashed_app_id or "")})
+        finally:
+            self._handling_crash = False
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

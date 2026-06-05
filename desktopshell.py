@@ -1205,6 +1205,113 @@ class MdiShell(QMainWindow):
     # ---------------------------------------------------------
     # Launch app into an MDI subwindow
     # ---------------------------------------------------------
+    def _prepare_app_container(self, container: QWidget) -> None:
+        """Set shell hosting attributes before app code builds child widgets."""
+
+        try:
+            container.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
+        except Exception:
+            pass
+        try:
+            container.setAttribute(Qt.WA_NativeWindow, False)
+        except Exception:
+            pass
+        try:
+            container.setFocusPolicy(Qt.StrongFocus)
+        except Exception:
+            pass
+
+    def _stabilize_embedded_multimedia_widgets(self, root: QWidget) -> None:
+        """Keep native multimedia/video surfaces from stealing shell input.
+
+        Qt Multimedia widgets such as QVideoWidget may create native child
+        windows. In an MDI shell those native surfaces can escape normal Qt
+        stacking/focus rules and leave the desktop unable to receive clicks or
+        key events. The video surface itself does not need input here, so make
+        it passive and keep the rest of the app controls focusable.
+        """
+
+        try:
+            widgets = [root, *root.findChildren(QWidget)]
+        except Exception:
+            widgets = [root]
+
+        for widget in widgets:
+            try:
+                widget.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
+            except Exception:
+                pass
+
+            class_name = ""
+            try:
+                class_name = widget.metaObject().className()
+            except Exception:
+                pass
+
+            if "QVideoWidget" not in str(class_name):
+                continue
+
+            try:
+                widget.setFocusPolicy(Qt.NoFocus)
+            except Exception:
+                pass
+            try:
+                widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            except Exception:
+                pass
+            try:
+                widget.releaseMouse()
+            except Exception:
+                pass
+            try:
+                widget.releaseKeyboard()
+            except Exception:
+                pass
+
+    def _watch_embedded_widget_tree(self, root: QWidget, event_filter: QObject) -> None:
+        try:
+            widgets = [root, *root.findChildren(QWidget)]
+        except Exception:
+            widgets = [root]
+
+        for widget in widgets:
+            try:
+                if widget.property("_dsMultimediaFilterInstalled"):
+                    continue
+                widget.installEventFilter(event_filter)
+                widget.setProperty("_dsMultimediaFilterInstalled", True)
+            except Exception:
+                pass
+
+    def _install_embedded_widget_stabilizer(self, root: QWidget) -> None:
+        shell = self
+
+        class _EmbeddedWidgetStabilizer(QObject):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self._pending = False
+
+            def eventFilter(self, obj, event):
+                try:
+                    if event.type() == QEvent.ChildAdded and not self._pending:
+                        self._pending = True
+                        QTimer.singleShot(0, self._refresh)
+                except Exception:
+                    pass
+                return False
+
+            def _refresh(self):
+                self._pending = False
+                shell._stabilize_embedded_multimedia_widgets(root)
+                shell._watch_embedded_widget_tree(root, self)
+
+        try:
+            event_filter = _EmbeddedWidgetStabilizer(root)
+            root._ds_multimedia_stabilizer = event_filter
+            self._watch_embedded_widget_tree(root, event_filter)
+        except Exception:
+            pass
+
     def launch_app(self, app_id: str):
         if app_id not in self.apps:
             QMessageBox.warning(self, "Unknown App", f"No app with id '{app_id}'")
@@ -1235,11 +1342,22 @@ class MdiShell(QMainWindow):
 
             # This is the real container the app expects.
             container = QWidget()
-
-            instance = app_class(window=self, container=container)
+            self._prepare_app_container(container)
 
             sub = self.mdi.addSubWindow(container)
             sub.setAttribute(Qt.WA_DeleteOnClose, True)
+            try:
+                sub.setAttribute(Qt.WA_DontCreateNativeAncestors, True)
+            except Exception:
+                pass
+            try:
+                sub.setFocusPolicy(Qt.StrongFocus)
+            except Exception:
+                pass
+
+            instance = app_class(window=self, container=container)
+            self._stabilize_embedded_multimedia_widgets(container)
+            self._install_embedded_widget_stabilizer(container)
 
             # Title
             sub.setWindowTitle(desc.display_name or app_id)
@@ -1251,7 +1369,16 @@ class MdiShell(QMainWindow):
 
             # Add to MDI
             container.resize(480, 600)
-            container.show()
+            sub.resize(container.size())
+            sub.show()
+            try:
+                self.mdi.setActiveSubWindow(sub)
+            except Exception:
+                pass
+            try:
+                container.setFocus(Qt.ActiveWindowFocusReason)
+            except Exception:
+                pass
 
             # Track the actual subwindow so activation and cleanup work reliably.
             self._running[app_id] = sub

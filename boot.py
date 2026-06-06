@@ -13,7 +13,6 @@ from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 from PySide6.QtGui import QMovie, QFont
 import requests
 from home import Deletescape
-from desktopshell import MdiShell
 
 from app_health import install_exception_hooks
 
@@ -442,8 +441,6 @@ def main():
                         help="Single app mode (embedded deletescape)")
     parser.add_argument("--tv", action="store_true",
                         help="Embedded variant for televisions")
-    parser.add_argument("--iron", action="store_true",
-                        help="Use the desktop shell instead of the home shell")
     parser.add_argument("--no-virtual-keyboard", action="store_true",
                         help="Disable the virtual keyboard handler")
     
@@ -539,12 +536,7 @@ def main():
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
     full_screen = bool(args.fullscreen or args.iron)
-    if args.iron:
-        os_instance = MdiShell(full_screen=full_screen)
-        if not hasattr(os_instance, "root"):
-            os_instance.root = os_instance
-    else:
-        os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=full_screen, embed=bool(args.kiosk), embedTV=bool(args.tv))
+    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=full_screen, embed=bool(args.kiosk), embedTV=bool(args.tv))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)

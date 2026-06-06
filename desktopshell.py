@@ -784,7 +784,7 @@ class MdiShell(QMainWindow):
 
         for app_id in autostart_ids:
             try:
-                running = self._get_or_start_app(app_id)
+                running = self._get_or_start_app(app_id, show_window=False)
                 if running is None:
                     continue
 
@@ -1336,18 +1336,25 @@ class MdiShell(QMainWindow):
         except Exception:
             pass
 
-    def _get_or_start_app(self, app_id: str) -> RunningApp | None:
+    def _get_or_start_app(self, app_id: str, *, show_window: bool = True) -> RunningApp | None:
         if app_id in self._running_apps:
             log.debug("App already running", extra={"app_id": str(app_id)})
+            if show_window:
+                try:
+                    self.launch_app(app_id)
+                except Exception:
+                    log.exception("Failed to show running app", extra={"app_id": str(app_id)})
             return self._running_apps[app_id]
 
-        self.launch_app(app_id)
+        self.launch_app(app_id, show_window=show_window)
         return self._running_apps.get(app_id)
 
     def _terminate_app(self, app_id: str) -> None:
         log.info("Terminate desktop app", extra={"app_id": str(app_id)})
         running = self._running_apps.get(app_id)
         sub = self._running.get(app_id)
+        if sub is None and running is not None:
+            sub = getattr(running, "subwindow", None)
 
         try:
             if running is not None:
@@ -1384,12 +1391,33 @@ class MdiShell(QMainWindow):
         except Exception:
             pass
 
-    def launch_app(self, app_id: str):
+    def launch_app(self, app_id: str, *, show_window: bool = True):
         if app_id not in self.apps:
             QMessageBox.warning(self, "Unknown App", f"No app with id '{app_id}'")
             return
 
         # If already running, just activate
+        if app_id in self._running_apps:
+            running = self._running_apps.get(app_id)
+            sub = getattr(running, "subwindow", None) if running is not None else self._running.get(app_id)
+            if not show_window:
+                return
+            if sub is not None:
+                try:
+                    sub.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+                    sub.show()
+                    self._running[app_id] = sub
+                    self.mdi.setActiveSubWindow(sub)
+                    self.active_app_id = app_id
+                    self.active_app = running.instance if running is not None else self._running_instances.get(app_id)
+                    self.taskbar.refresh()
+                    return
+                except Exception:
+                    pass
+
+            self._running_apps.pop(app_id, None)
+            self._running_instances.pop(app_id, None)
+
         if app_id in self._running:
             sub = self._running.get(app_id)
             try:
@@ -1458,18 +1486,26 @@ class MdiShell(QMainWindow):
             # Add to MDI
             container.resize(480, 600)
             sub.resize(container.size())
-            sub.show()
-            try:
-                self.mdi.setActiveSubWindow(sub)
-            except Exception:
-                pass
-            try:
-                container.setFocus(Qt.ActiveWindowFocusReason)
-            except Exception:
-                pass
+            if show_window:
+                sub.show()
+                try:
+                    self.mdi.setActiveSubWindow(sub)
+                except Exception:
+                    pass
+                try:
+                    container.setFocus(Qt.ActiveWindowFocusReason)
+                except Exception:
+                    pass
+            else:
+                try:
+                    sub.hide()
+                    sub.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                except Exception:
+                    pass
 
             # Track the actual subwindow so activation and cleanup work reliably.
-            self._running[app_id] = sub
+            if show_window:
+                self._running[app_id] = sub
             self._running_instances[app_id] = instance
             self._running_apps[app_id] = RunningApp(
                 app_id=app_id,
@@ -1477,8 +1513,9 @@ class MdiShell(QMainWindow):
                 instance=instance,
                 subwindow=sub,
             )
-            self.active_app_id = app_id
-            self.active_app = instance
+            if show_window:
+                self.active_app_id = app_id
+                self.active_app = instance
 
             # Cleanup tracking on close and refresh taskbar
             def _on_destroy(aid=app_id):
@@ -1504,11 +1541,12 @@ class MdiShell(QMainWindow):
 
             sub.destroyed.connect(_on_destroy)
 
-            # Make sure taskbar reflects the new running app
-            try:
-                self.taskbar.refresh()
-            except Exception:
-                pass
+            if show_window:
+                # Make sure taskbar reflects the new running app
+                try:
+                    self.taskbar.refresh()
+                except Exception:
+                    pass
 
         except Exception as e:
             self.active_app_id = app_id

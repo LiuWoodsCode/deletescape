@@ -1,412 +1,383 @@
-import sys
-from pathlib import Path
+from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QMdiArea,
-    QMdiSubWindow,
-    QMessageBox,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-)
-from PySide6.QtCore import Qt
+import argparse
+import asyncio
+import json
+import os
+import re
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from dbus_next.aio import MessageBus
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QColor, QPalette, QIcon
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QWidget
 
 from app_registry import AppDescriptor, discover_apps, load_app_class
-
-import sys
-import os
-import traceback
-import time
-import gc
-from dataclasses import dataclass
-from pathlib import Path
-from datetime import datetime
-
-from battery import get_battery_info
-from telephony import get_signal_strength
-
-from logger import PROCESS_START, get_logger
-
-from config import ConfigStore, OSConfig, DeviceConfigStore, DeviceConfig
+from config import ConfigStore, DeviceConfigStore, OSConfig
 from fs_layout import get_user_data_layout
-from app_registry import AppDescriptor, discover_apps, load_app_class, unload_app_modules
+from logger import configure as configure_logging
+from logger import get_logger
 
-from PySide6.QtCore import Qt, QTimer, QRectF, QObject, QThread, Signal
-from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap
-from PySide6.QtCore import QPropertyAnimation
-from PySide6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QFrame, QGraphicsOpacityEffect, QSizePolicy
 
-from buttons import ButtonAction, ButtonBinding, ButtonManager
+DEFAULT_BUS_NAME = "org.deletescapeos.Shell2"
+DEFAULT_OBJECT_PATH = "/org/deletescapeos/Shell2"
+DEFAULT_INTERFACE = "org.deletescapeos.Shell2"
 
-from photo_picker import request_photo_from_gallery
-from wallpaper import load_pixmap, scale_crop_center
+log = get_logger("host_shell")
 
-from background_tasks import BackgroundTaskManager
-from taskbar import Taskbar
 
-log = get_logger("continuity")
-# ---------------------------------------------------------
-# MAIN SHELL (NO MDI)
-# ---------------------------------------------------------
-class NativeShell(QMainWindow):
-    def __init__(self):
-        super().__init__()
+@dataclass
+class RemoteAppDescriptor:
+    app_id: str
+    folder: str = ""
+    main_py: str = ""
+    display_name: str = ""
+    bundle_id: str | None = None
+    build: int | None = None
+    version: str | None = None
+    permissions: list[str] | None = None
+    icon_path: str = ""
+    hidden: bool = False
+    autostart: bool = False
+    receive_custom_qss: bool = False
 
-        self.setWindowTitle("Deletescape Shell (Native Windowing)")
-        self.resize(1280, 800)
 
-        # Simple central layout (no desktop surface)
-        central = QWidget()
-        central_layout = QVBoxLayout(central)
-        central_layout.setContentsMargins(0, 0, 0, 0)
-        central_layout.setSpacing(0)
+def _camel_to_snake(name: str) -> str:
+    s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", str(name))
+    return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
-        # Placeholder (you can later add wallpaper widget here if desired)
-        self.desktop_placeholder = QWidget()
-        self.desktop_placeholder.setStyleSheet("background: black;")
-        central_layout.addWidget(self.desktop_placeholder)
 
-        # Taskbar stays
-        self.taskbar = Taskbar(self)
-        central_layout.addWidget(self.taskbar)
+def _decode_json(payload: str, default: Any = None) -> Any:
+    try:
+        return json.loads(payload)
+    except Exception:
+        return default
 
-        self.setCentralWidget(central)
 
-        self.apps: dict[str, AppDescriptor] = self.load_apps()
-        
-        self._config_store = ConfigStore()
-        self.config: OSConfig = self._config_store.load()
-        log.debug(
-            "Config loaded",
-            extra={
-                "dark_mode": bool(getattr(self.config, "dark_mode", False)),
-                "use_24h_time": bool(getattr(self.config, "use_24h_time", True)),
-                "lock_wallpaper": str(getattr(self.config, "lock_wallpaper", "")),
-                "home_wallpaper": str(getattr(self.config, "home_wallpaper", "")),
-            },
-        )
+def _namespace(data: Any) -> Any:
+    if isinstance(data, dict):
+        return SimpleNamespace(**{k: _namespace(v) for k, v in data.items()})
+    if isinstance(data, list):
+        return [_namespace(v) for v in data]
+    return data
 
-        self._device_config_store = DeviceConfigStore()
-        self.device: DeviceConfig = self._device_config_store.load()
-        log.debug(
-            "DeviceConfig loaded",
-            extra={
-                "manufacturer": str(getattr(self.device, "manufacturer", "")),
-                "model": str(getattr(self.device, "model", "")),
-                "has_hw_home": bool(getattr(self.device, "has_hw_home", True)),
-            },
-        )
 
-        self.active_app = None
-        self.active_app_id: str | None = None
-        self._control_center_open = False
-        self._handling_crash = False
-        self._locked = True
-        self._has_unlocked_once = False
-
-        # Background scheduler for apps.
-        self.background_tasks = BackgroundTaskManager(window=self)
-
-        # Load available apps from the apps/ folder (folder-based apps)
-        self.apps: dict[str, AppDescriptor] = self.load_apps()
-        log.info("Apps loaded", extra={"count": len(self.apps)})
-
-        # Running apps (real OS windows now)
-        self._running: dict[str, QMainWindow] = {}
-
-    # ---------------------------------------------------------
-    # App discovery
-    # ---------------------------------------------------------
-
-    def load_apps(self):
-        base_dir = Path(__file__).resolve().parent
-        builtin_apps_root = base_dir / "apps"
-        user_apps_root = get_user_data_layout(base_dir).applications
-
-        log.debug(
-            "Loading apps",
-            extra={"builtin_apps_root": str(builtin_apps_root), "user_apps_root": str(user_apps_root)},
-        )
-
-        builtins = discover_apps(builtin_apps_root)
-        user_apps = discover_apps(user_apps_root)
-
-        duplicates = set(builtins.keys()) & set(user_apps.keys())
-        if duplicates:
-            log.warning("User app IDs conflict with built-in apps; built-ins take precedence", extra={"app_ids": sorted(duplicates)})
-
-        merged = dict(user_apps)
-        merged.update(builtins)
-        return merged
-
-    # ---------------------------------------------------------
-    # Launch app (native window)
-    # ---------------------------------------------------------
-    def launch_app(self, app_id: str):
-        if app_id not in self.apps:
-            QMessageBox.warning(self, "Unknown App", f"No app with id '{app_id}'")
-            return
-
-        # Already running → raise window
-        if app_id in self._running:
-            win = self._running.get(app_id)
-            if win:
-                win.show()
-                win.raise_()
-                win.activateWindow()
-                return
-
-        desc = self.apps[app_id]
-
+def _remote_apps(payload: str) -> list[RemoteAppDescriptor]:
+    raw = _decode_json(payload, [])
+    result: list[RemoteAppDescriptor] = []
+    if not isinstance(raw, list):
+        return result
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
         try:
-            if desc.app_class is None:
-                desc.app_class = load_app_class(desc)
-
-            app_class = desc.app_class
-            if app_class is None:
-                raise RuntimeError("App class could not be loaded")
-
-            # ✅ Real OS-level window
-            window = QMainWindow()
-            window.setAttribute(Qt.WA_DeleteOnClose, True)
-            window.setWindowFlags(Qt.Window)
-
-            container = QWidget()
-            window.setCentralWidget(container)
-
-            # Instantiate app
-            instance = app_class(window=self, container=container)
-
-            window.setWindowTitle(desc.display_name or app_id)
-            window.resize(900, 600)
-
-            window.show()
-
-            # Track
-            self._running[app_id] = window
-
-            def _on_close():
-                try:
-                    self._running.pop(app_id, None)
-                except Exception:
-                    pass
-                try:
-                    self.taskbar.refresh()
-                except Exception:
-                    pass
-
-            window.destroyed.connect(_on_close)
-
-            self.taskbar.refresh()
-
-        except Exception as e:
-            print(e)
-            QMessageBox.critical(
-                self,
-                "App Launch Failed",
-                f"Failed to launch '{app_id}':\n\n{e}",
+            result.append(
+                RemoteAppDescriptor(
+                    app_id=str(item.get("app_id") or ""),
+                    folder=str(item.get("folder") or ""),
+                    main_py=str(item.get("main_py") or ""),
+                    display_name=str(item.get("display_name") or item.get("app_id") or ""),
+                    bundle_id=item.get("bundle_id"),
+                    build=item.get("build"),
+                    version=item.get("version"),
+                    permissions=list(item.get("permissions") or []),
+                    icon_path=str(item.get("icon_path") or ""),
+                    hidden=bool(item.get("hidden", False)),
+                    autostart=bool(item.get("autostart", False)),
+                    receive_custom_qss=bool(item.get("receive_custom_qss", False)),
+                )
             )
-
-    def _autostart_apps(self) -> None:
-        try:
-            autostart_ids = [a.app_id for a in self.apps.values() if bool(getattr(a, "autostart", False))]
         except Exception:
-            autostart_ids = []
+            pass
+    return result
 
-        if not autostart_ids:
+
+class ShellDBusClient:
+    def __init__(self, *, bus_name: str, object_path: str, interface_name: str):
+        self.bus_name = bus_name
+        self.object_path = object_path
+        self.interface_name = interface_name
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run_loop, name="ShellDBusClient", daemon=True)
+        self._bus = None
+        self._iface = None
+        self._ready = threading.Event()
+        self._thread.start()
+        self._ready.wait(timeout=5.0)
+
+    def _run_loop(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        self._loop.create_task(self._connect())
+        self._loop.run_forever()
+
+    async def _connect(self) -> None:
+        try:
+            self._bus = await MessageBus().connect()
+            introspection = await self._bus.introspect(self.bus_name, self.object_path)
+            obj = self._bus.get_proxy_object(self.bus_name, self.object_path, introspection)
+            self._iface = obj.get_interface(self.interface_name)
+        except Exception:
+            log.exception("Failed to connect to shell2 D-Bus service")
+        finally:
+            self._ready.set()
+
+    def available(self) -> bool:
+        return self._iface is not None
+
+    async def _call_async(self, method_name: str, *args):
+        if self._iface is None:
+            raise RuntimeError("shell2 D-Bus service is unavailable")
+        method = getattr(self._iface, f"call_{_camel_to_snake(method_name)}")
+        return await method(*args)
+
+    def call(self, method_name: str, *args, default: Any = None, timeout: float = 5.0) -> Any:
+        if self._iface is None:
+            return default
+        future = asyncio.run_coroutine_threadsafe(self._call_async(method_name, *args), self._loop)
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            log.exception("D-Bus call failed", extra={"method": method_name})
+            return default
+
+    def fire_and_forget(self, method_name: str, *args) -> None:
+        if self._iface is None:
             return
+        asyncio.run_coroutine_threadsafe(self._call_async(method_name, *args), self._loop)
 
-        log.info("Autostart apps", extra={"count": len(autostart_ids), "app_ids": list(autostart_ids)})
-
-        for app_id in autostart_ids:
-            try:
-                running = self._get_or_start_app(app_id)
-                if running is None:
-                    continue
-
-                # Keep service apps alive even when not foreground.
-                running.background_enabled = True
-
-                # Optional: allow service apps to perform post-init wiring.
-                try:
-                    hook = getattr(running.instance, "on_autostart", None)
-                    if callable(hook):
-                        hook()
-                except Exception:
-                    log.exception("Autostart hook failed", extra={"app_id": str(app_id)})
-            except Exception:
-                log.exception("Failed to autostart app", extra={"app_id": str(app_id)})
-
-    def show_startup_lock_screen(self) -> None:
-        """Show the initial lock screen overlay and log startup timing once."""
+    def close(self) -> None:
         try:
-            self._locked = True
-            self._show_lock_overlay(True)
-            log.info("Device starts locked")
+            self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception:
-            log.exception("Failed to show startup lock screen")
-
-        try:
-            dt_ms = int((time.perf_counter() - PROCESS_START) * 1000)
-            log.info("Startup timing", extra={"to_lock_screen_ms": dt_ms})
-        except Exception:
-            log.exception("Failed to log startup timing")
-
-    def format_time(self, dt: datetime) -> str:
-        if self.config.use_24h_time:
-            return dt.strftime('%H:%M')
-        # 12-hour without leading zero on Windows.
-        return dt.strftime('%I:%M %p').lstrip('0')
-
-    def set_setting(self, key: str, value):
-        if not hasattr(self.config, key):
-            log.debug("Ignoring unknown setting", extra={"key": str(key)})
-            return
-        log.info("Setting changed", extra={"key": str(key), "value": value})
-        setattr(self.config, key, value)
-        self._config_store.save(self.config)
-
-        # Apply changes immediately.
-        if key == 'dark_mode':
-            self.apply_theme()
-            try:
-                self.notifications.set_dark_mode(bool(self.config.dark_mode))
-            except Exception:
-                pass
-        if key in {'lock_wallpaper', 'home_wallpaper'}:
-            self.apply_wallpapers()
-
-    def apply_wallpapers(self) -> None:
-        try:
-            if hasattr(self, 'lock_screen'):
-                self.lock_screen.set_wallpaper_path(getattr(self.config, 'lock_wallpaper', '') or '')
-        except Exception:
-            log.exception("Failed to apply lock wallpaper")
             pass
 
-    def apply_theme(self):
+
+class HostedAppWindow(QMainWindow):
+    def __init__(
+        self,
+        *,
+        app_id: str,
+        hidden: bool,
+        shell_client: ShellDBusClient,
+        local_apps: dict[str, AppDescriptor],
+    ):
+        super().__init__()
+        self.app_id = str(app_id or "").strip()
+        self.active_app_id = self.app_id
+        self._hidden = bool(hidden)
+        self._shell = shell_client
+        self.apps = local_apps
+        self._config_store = ConfigStore()
+        self.config: OSConfig = self._load_config()
+        self.device = DeviceConfigStore().load()
+        self._app_instance = None
+        self._closed_notified = False
+
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setWindowFlags(Qt.Window)
+        self.setWindowTitle(self._display_name())
+        self.resize(900, 600)
+
+        desc = self.apps.get(self.app_id)
+        try:
+            if desc and desc.icon_path:
+                self.setWindowIcon(QIcon(str(desc.icon_path)))
+        except Exception:
+            pass
+
+        container = QWidget()
+        container.setFocusPolicy(Qt.StrongFocus)
+        self.setCentralWidget(container)
+        self.container = container
+
+        self._load_app(container)
+        self.apply_theme()
+        self._register_host()
+
+        if not self._hidden:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+    def _display_name(self) -> str:
+        desc = self.apps.get(self.app_id)
+        if desc is None:
+            return self.app_id
+        return desc.display_name or self.app_id
+
+    def _load_config(self) -> OSConfig:
+        remote = self._shell.call("GetConfig", default="")
+        data = _decode_json(remote, None) if remote else None
+        if isinstance(data, dict):
+            config = self._config_store.load()
+            for key, value in data.items():
+                if hasattr(config, key):
+                    try:
+                        setattr(config, key, value)
+                    except Exception:
+                        pass
+            return config
+        return self._config_store.load()
+
+    def _load_app(self, container: QWidget) -> None:
+        desc = self.apps.get(self.app_id)
+        if desc is None:
+            raise RuntimeError(f"No app with id {self.app_id!r}")
+        if desc.app_class is None:
+            desc.app_class = load_app_class(desc)
+        app_class = desc.app_class
+        if app_class is None:
+            raise RuntimeError(f"App {self.app_id!r} does not define class App")
+        self._app_instance = app_class(window=self, container=container)
+        try:
+            setattr(self._app_instance, "app_id", self.app_id)
+        except Exception:
+            pass
+
+    def _register_host(self) -> None:
+        self._shell.fire_and_forget("RegisterHost", self.app_id, int(os.getpid()), not self._hidden)
+
+    def _notify_closed(self, exit_code: int = 0) -> None:
+        if self._closed_notified:
+            return
+        self._closed_notified = True
+        self._shell.fire_and_forget("HostClosed", self.app_id, int(exit_code))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self._shell.fire_and_forget("SetWindowState", self.app_id, "active", self.isVisible())
+
+    def closeEvent(self, event) -> None:
+        try:
+            hook = getattr(self._app_instance, "on_quit", None)
+            if callable(hook):
+                hook()
+        except Exception:
+            log.exception("App on_quit hook failed", extra={"app_id": self.app_id})
+        self._notify_closed(0)
+        super().closeEvent(event)
+
+    def format_time(self, dt: datetime) -> str:
+        if getattr(self.config, "use_24h_time", True):
+            return dt.strftime("%H:%M")
+        return dt.strftime("%I:%M %p").lstrip("0")
+
+    def apply_theme(self) -> None:
         app = QApplication.instance()
         if app is None:
             return
-
-        log.debug("Apply theme", extra={"dark_mode": bool(getattr(self.config, "dark_mode", False))})
-
-        # Minimal dark palette for readability.
-        app.setStyle('FluentWinUi3')
-        from PySide6.QtGui import QGuiApplication
-        from PySide6.QtCore import Qt
-
-        app = QGuiApplication.instance()
-
-        if self.config.dark_mode:
-            if not os.name == "nt":
+        try:
+            app.setStyle("FluentWinUi3")
+        except Exception:
+            pass
+        try:
+            if getattr(self.config, "dark_mode", False):
                 palette = QPalette()
                 palette.setColor(QPalette.Window, QColor(53, 53, 53))
                 palette.setColor(QPalette.WindowText, Qt.white)
                 palette.setColor(QPalette.Base, QColor(35, 35, 35))
                 palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-                palette.setColor(QPalette.ToolTipBase, Qt.white)
-                palette.setColor(QPalette.ToolTipText, Qt.white)
                 palette.setColor(QPalette.Text, Qt.white)
                 palette.setColor(QPalette.Button, QColor(53, 53, 53))
                 palette.setColor(QPalette.ButtonText, Qt.white)
-                palette.setColor(QPalette.BrightText, Qt.red)
                 palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
                 palette.setColor(QPalette.HighlightedText, Qt.black)
-
                 app.setPalette(palette)
-            app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
-        else:
-            app.styleHints().setColorScheme(Qt.ColorScheme.Light)
-
-    def run_on_ui_thread(self, fn) -> None:
-        """Run callable on the Qt UI thread (safe from worker threads)."""
-
-        try:
-            app = QApplication.instance()
-            if app is None:
-                fn()
-                return
-
-            if QThread.currentThread() == app.thread():
-                fn()
-                return
-
-            self._ui_dispatcher._invoke.emit(fn)
+                app.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+            else:
+                app.styleHints().setColorScheme(Qt.ColorScheme.Light)
         except Exception:
-            # Best-effort fallback.
+            pass
+
+    def launch_app(self, app_id: str) -> bool:
+        return bool(self._shell.call("LaunchApp", str(app_id or ""), default=False))
+
+    def launch_all_apps(self) -> None:
+        for app in self.get_visible_apps():
+            self.launch_app(app.app_id)
+
+    def get_visible_apps(self) -> list[RemoteAppDescriptor]:
+        remote = self._shell.call("GetVisibleApps", default="")
+        if remote:
+            return _remote_apps(remote)
+        return [
+            RemoteAppDescriptor(
+                app_id=app.app_id,
+                folder=str(app.folder),
+                main_py=str(app.main_py),
+                display_name=app.display_name,
+                bundle_id=app.bundle_id,
+                build=app.build,
+                version=app.version,
+                permissions=list(app.permissions or []),
+                icon_path=str(app.icon_path) if app.icon_path else "",
+                hidden=app.hidden,
+                autostart=app.autostart,
+                receive_custom_qss=app.receive_custom_qss,
+            )
+            for app in self.apps.values()
+            if not app.hidden
+        ]
+
+    def get_all_apps(self) -> list[RemoteAppDescriptor]:
+        remote = self._shell.call("GetAllApps", default="")
+        if remote:
+            return _remote_apps(remote)
+        return [
+            RemoteAppDescriptor(
+                app_id=app.app_id,
+                folder=str(app.folder),
+                main_py=str(app.main_py),
+                display_name=app.display_name,
+                bundle_id=app.bundle_id,
+                build=app.build,
+                version=app.version,
+                permissions=list(app.permissions or []),
+                icon_path=str(app.icon_path) if app.icon_path else "",
+                hidden=app.hidden,
+                autostart=app.autostart,
+                receive_custom_qss=app.receive_custom_qss,
+            )
+            for app in self.apps.values()
+        ]
+
+    def get_running_apps(self) -> list[Any]:
+        remote = self._shell.call("GetRunningApps", default="[]")
+        return _namespace(_decode_json(remote, []))
+
+    def set_setting(self, key: str, value: Any) -> bool:
+        ok = bool(self._shell.call("SetSetting", str(key or ""), json.dumps(value), default=False))
+        if ok and hasattr(self.config, key):
             try:
-                fn()
+                setattr(self.config, key, value)
             except Exception:
                 pass
+            if key == "dark_mode":
+                self.apply_theme()
+        return ok
 
-    def _notify_ui(self, *, title: str, message: str = "", duration_ms: int = 3500, app_id: str | None = None) -> None:
-        """UI-thread-only notification implementation."""
-        if app_id is None:
-            app_id = self.active_app_id or ""
-
-        log.debug(
-            "Notify",
-            extra={
-                "app_id": str(app_id or ""),
-                "title": str(title or ""),
-                "message_len": len(str(message or "")),
-                "duration_ms": int(duration_ms),
-            },
+    def notify(self, *, title: str, message: str = "", duration_ms: int = 3500, app_id: str | None = None) -> bool:
+        return bool(
+            self._shell.call(
+                "Notify",
+                str(title or ""),
+                str(message or ""),
+                int(duration_ms),
+                str(app_id or self.app_id or ""),
+                default=False,
+            )
         )
 
-        try:
-            # Create a banner and add it to the bottom-right stacked layout.
-            banner = NotificationBanner(title or "", message or "", duration_ms, parent=self._notifications_area)
-
-            # Constrain width so long messages wrap instead of overflowing.
-            try:
-                # Allow banners to occupy up to half the window width, capped
-                # to a sensible maximum for large displays, and with a comfortable
-                # minimum so very small windows still show readable text.
-                max_w = min(640, max(360, int(self.width() * 0.5)))
-            except Exception:
-                max_w = 480
-            banner.setMaximumWidth(max_w)
-            banner.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            # Also allow a reasonable minimum width so short messages don't
-            # produce a tiny, narrow box.
-            try:
-                banner.setMinimumWidth(min(320, max_w))
-            except Exception:
-                pass
-
-            # Add aligned to right; layout alignment set to bottom/right.
-            self._notifications_layout.addWidget(banner, 0, Qt.AlignRight)
-            banner.show()
-            self._notifications_area.raise_()
-        except Exception:
-            log.exception("Failed to show desktop notification", extra={"title": title, "app_id": app_id})
-
-    def notify(self, *, title: str, message: str = "", duration_ms: int = 3500, app_id: str | None = None) -> None:
-        """Show a transient banner below the status bar.
-
-        Thread-safe: may be called from background threads.
-        """
-
-        self.run_on_ui_thread(lambda: self._notify_ui(title=title, message=message, duration_ms=duration_ms, app_id=app_id))
-
-    def enable_background(self, enabled: bool = True, *, app_id: str | None = None) -> None:
-        """Opt the given app into staying alive when not foreground."""
-
-        if app_id is None:
-            app_id = self.active_app_id
-        if not app_id:
-            return
-        running = self._running_apps.get(app_id)
-        if running is None:
-            return
-
-        log.info("Background mode updated", extra={"app_id": str(app_id), "enabled": bool(enabled)})
-        running.background_enabled = bool(enabled)
+    def enable_background(self, enabled: bool = True, *, app_id: str | None = None) -> bool:
+        return bool(self._shell.call("EnableBackground", str(app_id or self.app_id or ""), bool(enabled), default=False))
 
     def register_background_task(
         self,
@@ -417,53 +388,161 @@ class NativeShell(QMainWindow):
         app_id: str | None = None,
         start_immediately: bool = False,
     ):
-        """Register a periodic callback to run after first unlock."""
+        owner = str(app_id or self.app_id or "")
+        self.enable_background(True, app_id=owner)
+        timer = QTimer(self)
+        timer.setInterval(int(interval_ms))
+        timer.timeout.connect(callback)
+        if start_immediately:
+            QTimer.singleShot(0, callback)
+        timer.start()
+        return SimpleNamespace(task_id=f"{owner}:{name}:{id(timer)}", cancel=timer.stop, timer=timer)
 
-        if app_id is None:
-            app_id = self.active_app_id
-        if not app_id:
-            app_id = ""
+    def background_tasks_allowed(self) -> bool:
+        return True
 
-        log.debug(
-            "Register background task via API",
-            extra={"app_id": str(app_id), "task_name": str(name), "interval_ms": int(interval_ms), "start_immediately": bool(start_immediately)},
+    def has_unlocked_once(self) -> bool:
+        return True
+
+    def set_media_session(
+        self,
+        *,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        artwork_path: str = "",
+        position_ms: int | None = None,
+        duration_ms: int | None = None,
+        playback_state: str = "playing",
+        controls: dict[str, Any] | None = None,
+        app_id: str | None = None,
+    ) -> bool:
+        payload = {
+            "title": title,
+            "artist": artist,
+            "album": album,
+            "artwork_path": artwork_path,
+            "position_ms": position_ms,
+            "duration_ms": duration_ms,
+            "playback_state": playback_state,
+            "available_commands": sorted((controls or {}).keys()),
+            "updated_at": time.time(),
+        }
+        return bool(self._shell.call("SetMediaSession", str(app_id or self.app_id or ""), json.dumps(payload), default=False))
+
+    update_media_session = set_media_session
+
+    def clear_media_session(self, *, app_id: str | None = None) -> bool:
+        return bool(self._shell.call("ClearMediaSession", str(app_id or self.app_id or ""), default=False))
+
+    def get_active_media_session(self) -> Any | None:
+        payload = self._shell.call("GetActiveMediaSession", default="null")
+        return _namespace(_decode_json(payload, None))
+
+    def send_media_command(self, command: str, *, app_id: str | None = None, **payload) -> bool:
+        return bool(
+            self._shell.call(
+                "SendMediaCommand",
+                str(command or ""),
+                str(app_id or ""),
+                json.dumps(payload or {}),
+                default=False,
+            )
         )
-        return self.background_tasks.register(
-            app_id=str(app_id),
-            callback=callback,
-            interval_ms=interval_ms,
-            name=name,
-            start_immediately=start_immediately,
-        )
 
-    # ---------------------------------------------------------
-    # App discovery (same mechanism)
-    # ---------------------------------------------------------
+    def get_battery_info(self) -> Any:
+        return _namespace(_decode_json(self._shell.call("GetBatteryInfo", default="{}"), {}))
 
-    # ---------------------------------------------------------
-    # Launch app into an MDI subwindow
-    # ---------------------------------------------------------
+    def get_location_info(self) -> Any:
+        return _namespace(_decode_json(self._shell.call("GetLocationInfo", default="{}"), {}))
 
-    # ---------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------
-    def launch_all_apps(self):
-        for app_id in self.apps.keys():
-            self.launch_app(app_id)
+    def get_wifi_info(self) -> Any:
+        return _namespace(_decode_json(self._shell.call("GetWifiInfo", default="{}"), {}))
 
-    def get_visible_apps(self):
-        return [app for app in self.apps.values() if not app.hidden]
+    def scan_wifi_networks(self) -> list[Any]:
+        return _namespace(_decode_json(self._shell.call("ScanWifiNetworks", default="[]"), []))
 
-    def get_all_apps(self):
-        return list(self.apps.values())
+    def list_wifi_profiles(self) -> list[Any]:
+        return _namespace(_decode_json(self._shell.call("ListWifiProfiles", default="[]"), []))
+
+    def add_wifi_profile(self, ssid: str, *, password: str | None = None, secure: bool | None = None) -> bool:
+        return bool(self._shell.call("AddWifiProfile", str(ssid or ""), str(password or ""), bool(secure), default=False))
+
+    def delete_wifi_profile(self, ssid: str) -> bool:
+        return bool(self._shell.call("DeleteWifiProfile", str(ssid or ""), default=False))
+
+    def get_audio_info(self) -> Any:
+        return _namespace(_decode_json(self._shell.call("GetAudioInfo", default="{}"), {}))
+
+    def list_audio_output_devices(self) -> list[Any]:
+        return _namespace(_decode_json(self._shell.call("ListAudioOutputDevices", default="[]"), []))
+
+    def set_audio_volume(self, percent: int) -> bool:
+        return bool(self._shell.call("SetAudioVolume", int(percent), default=False))
+
+    def set_audio_muted(self, muted: bool) -> bool:
+        return bool(self._shell.call("SetAudioMuted", bool(muted), default=False))
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        return bool(self._shell.call("SetAudioOutputDevice", str(device_id or ""), default=False))
 
 
-# ---------------------------------------------------------
-# ENTRY POINT
-# ---------------------------------------------------------
-if __name__ == "__main__":
+def _load_apps(base_dir: Path) -> dict[str, AppDescriptor]:
+    builtin_apps_root = base_dir / "apps"
+    user_apps_root = get_user_data_layout(base_dir).applications
+    user_apps = discover_apps(user_apps_root)
+    builtins = discover_apps(builtin_apps_root)
+    merged = dict(user_apps)
+    merged.update(builtins)
+    return merged
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Host one deletescape app in its own process")
+    parser.add_argument("app_id", help="Application id to host")
+    parser.add_argument("--hidden", action="store_true", help="Instantiate the app without showing a window")
+    parser.add_argument("--shell-bus-name", default=DEFAULT_BUS_NAME)
+    parser.add_argument("--shell-object-path", default=DEFAULT_OBJECT_PATH)
+    parser.add_argument("--shell-interface", default=DEFAULT_INTERFACE)
+    args = parser.parse_args()
+
+    configure_logging()
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(not bool(args.hidden))
 
-    shell = NativeShell()
-    shell.launch_app(str(sys.argv[1]))
-    sys.exit(app.exec())
+    shell_client = ShellDBusClient(
+        bus_name=args.shell_bus_name,
+        object_path=args.shell_object_path,
+        interface_name=args.shell_interface,
+    )
+
+    base_dir = Path(__file__).resolve().parent
+    apps = _load_apps(base_dir)
+    if args.app_id not in apps:
+        QMessageBox.critical(None, "Unknown App", f"No app with id '{args.app_id}'")
+        sys.exit(2)
+
+    try:
+        window = HostedAppWindow(
+            app_id=args.app_id,
+            hidden=bool(args.hidden),
+            shell_client=shell_client,
+            local_apps=apps,
+        )
+    except Exception as exc:
+        log.exception("Failed to host app", extra={"app_id": str(args.app_id)})
+        QMessageBox.critical(None, "App Launch Failed", f"Failed to launch '{args.app_id}':\n\n{exc}")
+        shell_client.fire_and_forget("HostClosed", str(args.app_id), 1)
+        sys.exit(1)
+
+    exit_code = app.exec()
+    try:
+        window._notify_closed(int(exit_code))
+    except Exception:
+        pass
+    shell_client.close()
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

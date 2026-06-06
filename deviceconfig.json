@@ -1,3 +1,17 @@
 {
-  "model": "unbuilt"
+  "manufacturer": "Grizzco Industries",
+  "model": "SIMDEV",
+  "model_name": "Simulated Device",
+  "has_hw_home": false,
+  "drivers": {
+    "battery": "upower",
+    "modem": "simulated",
+    "location": "simulated",
+    "wifi": "nmcli",
+    "display": "simulated",
+    "audio": "linux",
+    "sensors": "simulated",
+    "vibration": "simulated",
+    "thermals": "none"
+  }
 }

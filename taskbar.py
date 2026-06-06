@@ -9,7 +9,7 @@ from datetime import datetime
 class Taskbar(QWidget):
     """A minimal taskbar showing running apps and allowing quick activation.
 
-    This is intentionally simple: it renders a button per running app and
+    This is intentionally simple: it renders an icon button per running app and
     activates the associated MDI subwindow when clicked. If an app isn't
     running it will launch it via the shell.
     """
@@ -27,6 +27,8 @@ class Taskbar(QWidget):
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy())
 
         self._buttons = {}
+        self._task_icon_size = QSize(24, 24)
+        self._task_button_size = QSize(36, 32)
         # Left-most "Apps" button that opens the home app as a frameless panel
         # Icon-only Apps button (Win10-style)
         self._apps_button = QPushButton()
@@ -61,56 +63,6 @@ class Taskbar(QWidget):
         except Exception:
             pass
         self._layout.addWidget(self._apps_button)
-        # Search box next to Apps (UI only for now)
-        self._search = QLineEdit()
-        try:
-            self._search.setPlaceholderText('Search apps, settings...')
-        except Exception:
-            pass
-        try:
-            self._search.setFixedWidth(200)
-        except Exception:
-            pass
-        try:
-            self._search.setClearButtonEnabled(True)
-        except Exception:
-            pass
-        self._layout.addWidget(self._search)
-        # Dummy Overview button next to search (icon-only)
-        try:
-            self._overview_button = QPushButton()
-            try:
-                self._overview_button.setToolTip('Overview')
-            except Exception:
-                pass
-            try:
-                ov_icon = QIcon('assets/icons/convergance/overview.svg')
-                self._overview_button.setIcon(ov_icon)
-                ov_icon_size = QSize(20, 20)
-                try:
-                    self._overview_button.setIconSize(ov_icon_size)
-                except Exception:
-                    pass
-            except Exception:
-                ov_icon_size = QSize(20, 20)
-            try:
-                self._overview_button.setFlat(True)
-            except Exception:
-                pass
-            try:
-                self._overview_button.setStyleSheet('border: none; background: transparent;')
-            except Exception:
-                pass
-            try:
-                self._overview_button.clicked.connect(self._on_overview_click)
-            except Exception:
-                try:
-                    self._overview_button.clicked.connect(lambda: None)
-                except Exception:
-                    pass
-            self._layout.addWidget(self._overview_button)
-        except Exception:
-            pass
         # Clock label on the right-hand side (time + date stacked)
         self._clock = QLabel("")
         # Slightly wider to accommodate two lines (time + date)
@@ -126,7 +78,39 @@ class Taskbar(QWidget):
 
         # Add a stretch and then the clock so buttons appear on the left
         self._layout.addStretch(1)
+        self._control_center_button = QPushButton()
+        try:
+            self._control_center_button.setToolTip("Control center")
+        except Exception:
+            pass
+        icon_size = QSize(20, 20)
+        button_size = QSize(32, 32)
+        try:
+            self._control_center_button.setIcon(QIcon('assets/icons/settings/gear.svg'))
+            self._control_center_button.setIconSize(icon_size)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setFlat(True)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setStyleSheet(
+                "QPushButton { border: none; background: transparent; padding: 0px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 28); border-radius: 6px; }"
+            )
+        except Exception:
+            pass
+        try:
+            self._control_center_button.setFixedSize(button_size)
+        except Exception:
+            pass
+        try:
+            self._control_center_button.clicked.connect(self._on_control_center_click)
+        except Exception:
+            pass
         self._layout.addWidget(self._clock)
+        self._layout.addWidget(self._control_center_button)
 
         # Timer to update clock text every second
         self._clock_timer = QTimer(self)
@@ -185,7 +169,7 @@ class Taskbar(QWidget):
         for app_id in running_ids:
             desc = self.shell.apps.get(app_id)
             label = (desc.display_name if desc and getattr(desc, 'display_name', None) else app_id)
-            btn = QPushButton(label)
+            btn = self._make_app_button(app_id, desc, label)
             btn.setCheckable(True)
             btn.setChecked(self.shell.active_app_id == app_id)
             btn.clicked.connect(lambda checked, aid=app_id: self._on_click(aid))
@@ -200,6 +184,48 @@ class Taskbar(QWidget):
 
         # Small spacer to take remaining space on the right
         # Spacer and clock are managed in __init__, nothing more to do here
+
+    def _make_app_button(self, app_id: str, desc, label: str) -> QPushButton:
+        btn = QPushButton()
+        try:
+            btn.setToolTip(label)
+            btn.setAccessibleName(label)
+        except Exception:
+            pass
+
+        icon = QIcon()
+        try:
+            icon_path = getattr(desc, 'icon_path', None) if desc is not None else None
+            if icon_path:
+                icon = QIcon(str(icon_path))
+        except Exception:
+            icon = QIcon()
+
+        try:
+            if not icon.isNull():
+                btn.setIcon(icon)
+                btn.setIconSize(self._task_icon_size)
+            else:
+                btn.setText(label[:1].upper() if label else app_id[:1].upper())
+        except Exception:
+            try:
+                btn.setText(label[:1].upper() if label else app_id[:1].upper())
+            except Exception:
+                pass
+
+        try:
+            btn.setFixedSize(self._task_button_size)
+        except Exception:
+            pass
+        try:
+            btn.setStyleSheet(
+                "QPushButton { border: none; background: transparent; padding: 0px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 28); border-radius: 6px; }"
+                "QPushButton:checked { background: rgba(255, 255, 255, 42); border-radius: 6px; }"
+            )
+        except Exception:
+            pass
+        return btn
 
     def _update_clock(self):
         try:
@@ -327,6 +353,18 @@ class Taskbar(QWidget):
         # Dummy handler for the overview button (no-op for now)
         try:
             return
+        except Exception:
+            pass
+
+    def _on_control_center_click(self):
+        try:
+            toggle = getattr(self.shell, 'toggle_control_center', None)
+            if callable(toggle):
+                toggle()
+                return
+            opener = getattr(self.shell, 'open_control_center', None)
+            if callable(opener):
+                opener()
         except Exception:
             pass
 

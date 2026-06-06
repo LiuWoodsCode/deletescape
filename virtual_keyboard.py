@@ -27,7 +27,7 @@ class VirtualKeyboard(QWidget):
         # btn.
         # btn.setMinimumSize(0, 0)
         btn.setMinimumHeight(0)
-        btn.setMaximumHeight(67)
+        # btn.setMaximumHeight(40)
         btn.setStyleSheet("font-size: 22px;")
 
     def _build_ui(self) -> None:

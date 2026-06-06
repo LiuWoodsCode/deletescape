@@ -199,7 +199,7 @@ class WebView(QWebEngineView):
         certificate_dialog = Ui_CertificateErrorDialog()
         certificate_dialog.setupUi(dialog)
         certificate_dialog.m_iconLabel.setText("")
-        icon = QIcon(w.style().standardIcon(QStyle.SP_MessageBoxWarning, 0, w))
+        icon = w.style().standardIcon(QStyle.SP_MessageBoxWarning, None, w)
         certificate_dialog.m_iconLabel.setPixmap(icon.pixmap(32, 32))
         certificate_dialog.m_errorLabel.setText(error.description())
         dialog.setWindowTitle("Certificate Error")
@@ -218,7 +218,7 @@ class WebView(QWebEngineView):
         password_dialog.setupUi(dialog)
 
         password_dialog.m_iconLabel.setText("")
-        icon = QIcon(w.style().standardIcon(QStyle.SP_MessageBoxQuestion, 0, w))
+        icon = w.style().standardIcon(QStyle.SP_MessageBoxQuestion, None, w)
         password_dialog.m_iconLabel.setPixmap(icon.pixmap(32, 32))
 
         url_str = requestUrl.toString().toHtmlEscaped()
@@ -257,7 +257,7 @@ class WebView(QWebEngineView):
 
         password_dialog.m_iconLabel.setText("")
 
-        icon = QIcon(w.style().standardIcon(QStyle.SP_MessageBoxQuestion, 0, w))
+        icon = w.style().standardIcon(QStyle.SP_MessageBoxQuestion, None, w)
         password_dialog.m_iconLabel.setPixmap(icon.pixmap(32, 32))
 
         proxy = proxyHost.toHtmlEscaped()

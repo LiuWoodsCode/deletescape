@@ -99,6 +99,7 @@ def _get_battery_driver_reader():
     chosen = str(get_device_driver_name("battery", fallback="winnt")).strip().lower() or "winnt"
     module_name = {
         "winnt": "drivers.batt.win32",
+        "upower": "drivers.batt.upower",
         "simulated": "drivers.batt.simulated",
         "none": "drivers.batt.none",
     }.get(chosen, "drivers.batt.none")

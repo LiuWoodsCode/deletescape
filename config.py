@@ -182,6 +182,7 @@ class DeviceConfig:
 
         default_battery_driver = "winnt" if os.name == "nt" else "psinfo"
         default_wifi_driver = "netsh" if os.name == "nt" else "nmcli"
+        default_audio_driver = "linux" if platform.system() == "Linux" else "none"
         default_thermals_driver = "vcgencmd" if platform.system() == "Linux" else "none"
         default_drivers: Dict[str, str] = {
             "battery": default_battery_driver,
@@ -189,7 +190,7 @@ class DeviceConfig:
             "location": "none",
             "wifi": default_wifi_driver,
             "display": "none",
-            "audio": "none",
+            "audio": default_audio_driver,
             "sensors": "none",
             "thermals": default_thermals_driver,
             "vibration": "none",

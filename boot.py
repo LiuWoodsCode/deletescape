@@ -8,11 +8,12 @@ import json
 from pathlib import Path
 import time
 import traceback
-from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread
+from PySide6.QtCore import QCoreApplication, Qt, QUrl, QSize, QObject, Signal, Slot, QThread, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow
 from PySide6.QtGui import QMovie, QFont
 import requests
 from home import Deletescape
+from desktopshell import MdiShell
 
 from app_health import install_exception_hooks
 
@@ -249,7 +250,8 @@ def _run_boot_init_checks(
     *, 
     base_dir: Path, 
     os_instance: Deletescape, 
-    args
+    args,
+    iron_shell: bool = False,
 ) -> tuple[bool, str, dict]:
 
     time.sleep(random.randint(1,3))
@@ -293,7 +295,7 @@ def _run_boot_init_checks(
         )
         return False, "Application registry unavailable", bug
 
-    if "home" not in os_instance.apps:
+    if not iron_shell and "home" not in os_instance.apps:
         bug = _boot_bug(
             BootBug.HOME_APP_REQUIRED,
             subsystem="appreg",
@@ -389,6 +391,39 @@ def _configure_default_app_font(*, base_dir: Path, app: QApplication, log) -> No
     log.info("Applied bundled default app font", extra={"family": family, "fonts_loaded": len(set(loaded_families))})
 
 
+def _force_fullscreen(window: QMainWindow, *, frameless_fallback: bool = False) -> None:
+    try:
+        window.setWindowState(window.windowState() | Qt.WindowFullScreen)
+        window.showFullScreen()
+        QApplication.processEvents()
+
+        if frameless_fallback:
+            screen = window.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                window.setGeometry(screen.geometry())
+            window.setWindowFlags(window.windowFlags() | Qt.FramelessWindowHint)
+            window.showFullScreen()
+    except Exception:
+        try:
+            window.showFullScreen()
+        except Exception:
+            pass
+
+
+def _show_boot_window(window: QMainWindow, *, full_screen: bool, frameless_fallback: bool = False) -> None:
+    if not full_screen:
+        window.show()
+        return
+
+    window.show()
+    _force_fullscreen(window, frameless_fallback=frameless_fallback)
+    for delay_ms in (0, 100, 500, 1000):
+        QTimer.singleShot(
+            delay_ms,
+            lambda w=window, fallback=frameless_fallback: _force_fullscreen(w, frameless_fallback=fallback),
+        )
+
+
 
 import argparse
 
@@ -405,7 +440,13 @@ def main():
                         help="Force software rendering")
     parser.add_argument("--kiosk", action="store_true",
                         help="Single app mode (embedded deletescape)")
-
+    parser.add_argument("--tv", action="store_true",
+                        help="Embedded variant for televisions")
+    parser.add_argument("--iron", action="store_true",
+                        help="Use the desktop shell instead of the home shell")
+    parser.add_argument("--no-virtual-keyboard", action="store_true",
+                        help="Disable the virtual keyboard handler")
+    
     args = parser.parse_args()
 
     # Configure logging as early as possible so startup issues are captured.
@@ -497,11 +538,17 @@ def main():
 
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
-    os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=args.fullscreen, embed=bool(args.kiosk))
+    full_screen = bool(args.fullscreen or args.iron)
+    if args.iron:
+        os_instance = MdiShell(full_screen=full_screen)
+        if not hasattr(os_instance, "root"):
+            os_instance.root = os_instance
+    else:
+        os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=full_screen, embed=bool(args.kiosk), embedTV=bool(args.tv))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)
-    os_instance.show()
+    _show_boot_window(os_instance, full_screen=full_screen, frameless_fallback=bool(args.iron))
 
     splash_dir = base_dir / "splash"
 
@@ -537,15 +584,17 @@ def main():
         log.info("QtWebEngine preload disabled via boot parameter")
 
     # Install our custom focus filter to show the in-app virtual keyboard.
-    try:
-        from input_helper import install_focus_filter  # type: ignore
+    if not args.no_virtual_keyboard:
+        if not args.iron:
+            try:
+                from input_helper import install_focus_filter  # type: ignore
 
-        # Pass the OS root widget so the keyboard is added into the central
-        # content layout (never into QMainWindowLayout directly).
-        install_focus_filter(app, host_widget=os_instance.root)
-        log.info("Installed custom virtual keyboard focus filter")
-    except Exception:
-        log.exception("Failed to install custom virtual keyboard focus filter")
+                # Pass the OS root widget so the keyboard is added into the central
+                # content layout (never into QMainWindowLayout directly).
+                install_focus_filter(app, host_widget=os_instance.root)
+                log.info("Installed custom virtual keyboard focus filter")
+            except Exception:
+                log.exception("Failed to install custom virtual keyboard focus filter")
 
     # Run init checks in a background Qt thread so the UI can remain responsive
     # and we can show an animated throbber while the checks run.
@@ -586,7 +635,8 @@ def main():
                 ok, reason, details = _run_boot_init_checks(
                     base_dir=self.base_dir,
                     os_instance=self.os_instance,
-                    args=self.args
+                    args=self.args,
+                    iron_shell=bool(getattr(self.args, "iron", False)),
                 )
 
                 if not ok:

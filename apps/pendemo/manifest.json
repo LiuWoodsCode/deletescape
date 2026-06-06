@@ -1,7 +1,8 @@
 {
   "id": "pendemo",
-  "displayName": "Pen Demo",
+  "displayName": "Doodle",
   "version": "1.0.0",
   "build": 1,
-  "permissions": []
+  "permissions": [],
+  "icon": "Assets/icon.png"
 }

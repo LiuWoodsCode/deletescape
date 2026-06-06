@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import sys
 import time
 import json
 import threading
@@ -8,8 +9,11 @@ import threading
 # -------------------------
 
 _WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_PATH = Path.home() / ".tinybrowser_settings.json"
+_USER_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "userdata" / "Data" / "Application" / "crimew"
+_CONFIG_PATH = _USER_DATA_DIR / "settings.json"
 _FLAGS_PATH = os.path.join(_WORKSPACE_DIR, "data", "flags.json")
+_MANIFEST_PATH = os.path.join(_WORKSPACE_DIR, "manifest.json")
+print(f"Paths:\nWorkspace: {_WORKSPACE_DIR}\nUserData: {_USER_DATA_DIR}\nConfig: {_CONFIG_PATH}\nFlags: {_FLAGS_PATH}\nManifest: {_MANIFEST_PATH}")
 
 # -------------------------
 # Internal Caches
@@ -24,15 +28,28 @@ _flags_cache: dict | None = None
 _flags_mtime: float | None = None
 
 
+def get_user_data_dir() -> Path:
+    _USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return _USER_DATA_DIR
+
+def get_app_version() -> str:
+    with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)["version"]
+
 # -------------------------
 # Config Handling
 # -------------------------
 
 def _load_config_file() -> dict:
-    if not os.path.exists(_CONFIG_PATH):
-        return {}
+    if os.path.exists(_CONFIG_PATH):
+        path = _CONFIG_PATH
+    else:
+        legacy_path = Path.home() / ".tinybrowser_settings.json"
+        if not os.path.exists(legacy_path):
+            return {}
+        path = legacy_path
     try:
-        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -73,6 +90,7 @@ def save_config_file(data: dict) -> bool:
 
     tmp = str(_CONFIG_PATH) + ".tmp"
     try:
+        _USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
         raw = json.dumps(data, ensure_ascii=False, indent=2)
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(raw)
@@ -222,19 +240,6 @@ _SEARCH_PROVIDER_CHOICES = {"google", "bing", "duckduckgo"}
 
 
 def get_search_provider(default: str = "google") -> str:
-    cfg = get_config_cached()
-    search = cfg.get("search") if isinstance(cfg, dict) else {}
-    search = search if isinstance(search, dict) else {}
-    provider = search.get("provider", default)
-
-    if isinstance(provider, str):
-        normalized = provider.strip().lower()
-        if normalized in _SEARCH_PROVIDER_CHOICES:
-            return normalized
-
-    normalized_default = default.strip().lower() if isinstance(default, str) else "google"
-    if normalized_default in _SEARCH_PROVIDER_CHOICES:
-        return normalized_default
     return "google"
 
 

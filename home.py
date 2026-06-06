@@ -10,6 +10,15 @@ from pathlib import Path
 from datetime import datetime
 
 from battery import get_battery_info
+from audio import (
+    AudioDevice,
+    AudioInfo,
+    get_audio_info,
+    list_audio_output_devices,
+    set_muted as set_audio_muted,
+    set_output_device as set_audio_output_device,
+    set_volume as set_audio_volume,
+)
 from telephony import get_signal_strength
 from location import LocationInfo, get_location_info
 from wifi import (
@@ -47,6 +56,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
     QScrollArea,
+    QProgressBar,
 )
 from PySide6.QtCore import Qt, QTimer, QRectF, QRect, QObject, QThread, Signal, QEasingCurve, QPropertyAnimation
 from PySide6.QtGui import QFont, QPalette, QColor, QPainter, QPen, QBrush, QImage, QPixmap, QIcon
@@ -59,6 +69,7 @@ from photo_picker import request_photo_from_gallery
 from wallpaper import load_pixmap, scale_crop_center
 
 from background_tasks import BackgroundTaskManager
+from media import MediaSession, MediaSessionManager
 from notifications import NotificationCenter
 from thermals import get_thermal_info
 
@@ -295,6 +306,13 @@ class StatusBarWidget(QWidget):
             return
 
         pct = int(percentage)
+        # Weird issue with upower, if a battery is not present
+        # then it will show up as 0%
+        if pct == 0:
+            self._warned_low_20 = False
+            self._warned_critical_10 = False
+            return
+        
         charging = True if is_charging is True else False
 
         # If we are charging, don't nag, and allow warnings again on the next discharge cycle.
@@ -631,6 +649,229 @@ class NotificationCard(QFrame):
         )
         self._icon.setPixmap(scaled)
         self._icon.setVisible(True)
+
+
+class MediaSessionCard(QFrame):
+    def __init__(self, window: 'Deletescape', parent=None):
+        super().__init__(parent)
+        self.window = window
+        self._session: MediaSession | None = None
+
+        self.setObjectName("mediaCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setVisible(False)
+        self.setStyleSheet("""
+        QFrame#mediaCard {
+            background-color: #2b2b2b;
+            border-radius: 12px;
+            border: 1px solid #3c3c3c;
+        }
+        QLabel#mediaTitle {
+            color: white;
+            font-size: 15px;
+            font-weight: 650;
+        }
+        QLabel#mediaSub {
+            color: #b0b0b0;
+            font-size: 11px;
+        }
+        QLabel#mediaArt {
+            color: #d6d6d6;
+            background-color: #3a3a3a;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 650;
+        }
+        QPushButton#mediaButton {
+            min-width: 44px;
+            min-height: 32px;
+            padding: 4px 8px;
+        }
+        QProgressBar#mediaProgress {
+            border: none;
+            background-color: #484848;
+            border-radius: 3px;
+            height: 6px;
+            max-height: 6px;
+            text-align: center;
+        }
+        QProgressBar#mediaProgress::chunk {
+            background-color: #f2f2f2;
+            border-radius: 3px;
+        }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
+        root.addLayout(top)
+
+        self.art_label = QLabel("MEDIA")
+        self.art_label.setObjectName("mediaArt")
+        self.art_label.setFixedSize(64, 64)
+        self.art_label.setAlignment(Qt.AlignCenter)
+        top.addWidget(self.art_label, 0, Qt.AlignTop)
+
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(2)
+        top.addLayout(text, 1)
+
+        self.title_label = QLabel("")
+        self.title_label.setObjectName("mediaTitle")
+        self.title_label.setWordWrap(True)
+        text.addWidget(self.title_label)
+
+        self.artist_label = QLabel("")
+        self.artist_label.setObjectName("mediaSub")
+        self.artist_label.setWordWrap(True)
+        text.addWidget(self.artist_label)
+
+        self.app_label = QLabel("")
+        self.app_label.setObjectName("mediaSub")
+        self.app_label.setWordWrap(True)
+        text.addWidget(self.app_label)
+        text.addStretch(1)
+
+        self.progress = QProgressBar()
+        self.progress.setObjectName("mediaProgress")
+        self.progress.setRange(0, 1000)
+        self.progress.setTextVisible(False)
+        root.addWidget(self.progress)
+
+        self.time_label = QLabel("")
+        self.time_label.setObjectName("mediaSub")
+        self.time_label.setAlignment(Qt.AlignRight)
+        root.addWidget(self.time_label)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(8)
+        root.addLayout(controls)
+
+        self.prev_btn = self._control_button("<<", "previous")
+        self.rewind_btn = self._control_button("-10s", "seek_backward")
+        self.play_pause_btn = self._control_button("Pause", "pause")
+        self.forward_btn = self._control_button("+10s", "seek_forward")
+        self.next_btn = self._control_button(">>", "next")
+
+        controls.addStretch(1)
+        for btn in (self.prev_btn, self.rewind_btn, self.play_pause_btn, self.forward_btn, self.next_btn):
+            controls.addWidget(btn)
+        controls.addStretch(1)
+
+    def _control_button(self, text: str, command: str) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setObjectName("mediaButton")
+        btn.setDefault(False)
+        btn.setAutoDefault(False)
+        btn.clicked.connect(lambda _checked=False, command=command: self._send_command(command))
+        return btn
+
+    def _send_command(self, command: str) -> None:
+        try:
+            if self._session is None:
+                return
+            payload = {}
+            if command in {"seek_backward", "seek_forward"}:
+                payload["offset_ms"] = 10000
+            self.window.send_media_command(command, app_id=self._session.app_id, **payload)
+        except Exception:
+            log.exception("Media control command failed", extra={"command": str(command)})
+
+    def set_session(self, session: MediaSession | None) -> None:
+        self._session = session
+        self.setVisible(session is not None)
+        if session is None:
+            return
+
+        self.title_label.setText(session.title or "Now Playing")
+        self.artist_label.setText(self._subtitle(session))
+        self.app_label.setText(self._app_name(session.app_id))
+        self._set_artwork(session)
+        self._set_progress(session)
+        self._set_controls(session)
+
+    def _subtitle(self, session: MediaSession) -> str:
+        parts = [p for p in (session.artist, session.album) if str(p or "").strip()]
+        return " - ".join(parts) if parts else "Media session"
+
+    def _app_name(self, app_id: str) -> str:
+        try:
+            desc = self.window.apps.get(app_id)
+            if desc is not None:
+                return desc.display_name or app_id
+        except Exception:
+            pass
+        return app_id
+
+    def _set_artwork(self, session: MediaSession) -> None:
+        pixmap = QPixmap()
+        path = Path(str(session.artwork_path or ""))
+        if path.is_file():
+            pixmap = QPixmap(str(path))
+
+        if pixmap.isNull():
+            try:
+                desc = self.window.apps.get(session.app_id)
+                icon_path = getattr(desc, "icon_path", None) if desc is not None else None
+                if icon_path:
+                    pixmap = QPixmap(str(icon_path))
+            except Exception:
+                pass
+
+        if pixmap.isNull():
+            self.art_label.clear()
+            self.art_label.setText("MEDIA")
+            return
+
+        self.art_label.setText("")
+        self.art_label.setPixmap(pixmap.scaled(self.art_label.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+
+    def _set_progress(self, session: MediaSession) -> None:
+        duration = session.duration_ms
+        position = session.position_ms
+        if duration and position is not None:
+            value = max(0, min(1000, int((float(position) / float(duration)) * 1000.0)))
+            self.progress.setValue(value)
+            self.progress.setVisible(True)
+            self.time_label.setText(f"{self._format_ms(position)} / {self._format_ms(duration)}")
+            self.time_label.setVisible(True)
+            return
+
+        self.progress.setValue(0)
+        self.progress.setVisible(False)
+        self.time_label.clear()
+        self.time_label.setVisible(False)
+
+    def _format_ms(self, value: int) -> str:
+        total = max(0, int(value // 1000))
+        minutes = total // 60
+        seconds = total % 60
+        return f"{minutes}:{seconds:02d}"
+
+    def _set_controls(self, session: MediaSession) -> None:
+        is_playing = session.playback_state == "playing"
+        self.play_pause_btn.setText("Pause" if is_playing else "Play")
+
+        play_command = "pause" if is_playing else "play"
+        if not session.supports(play_command) and session.supports("toggle_play_pause"):
+            play_command = "toggle_play_pause"
+        try:
+            self.play_pause_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self.play_pause_btn.clicked.connect(lambda _checked=False, command=play_command: self._send_command(command))
+
+        self.prev_btn.setEnabled(session.supports("previous"))
+        self.rewind_btn.setEnabled(session.supports("seek_backward"))
+        self.forward_btn.setEnabled(session.supports("seek_forward"))
+        self.next_btn.setEnabled(session.supports("next"))
+        self.play_pause_btn.setEnabled(session.supports(play_command))
         
 class ControlCenterOverlay(QWidget):
     def __init__(self, window: 'Deletescape', parent: QWidget):
@@ -684,6 +925,14 @@ class ControlCenterOverlay(QWidget):
         tiles_row.addWidget(self.cell_tile)
 
         layout.addLayout(tiles_row)
+
+        # --- Media session ---
+        self.media_card = MediaSessionCard(window=self.window, parent=self)
+        layout.addWidget(self.media_card)
+        try:
+            self.media_card.set_session(self.window.get_active_media_session())
+        except Exception:
+            self.media_card.set_session(None)
 
         # --- Notifications header ---
         notif_hdr = QLabel("Notifications")
@@ -811,6 +1060,12 @@ class ControlCenterOverlay(QWidget):
         self._bg_pix = pixmap
         self._update_background_scaled()
 
+    def set_media_session(self, session: MediaSession | None) -> None:
+        try:
+            self.media_card.set_session(session)
+        except Exception:
+            log.exception("Failed to update control center media session")
+
     def _update_background_scaled(self) -> None:
         try:
             self._bg.setGeometry(self.rect())
@@ -835,6 +1090,7 @@ class ControlCenterOverlay(QWidget):
 
     def _update_time(self):
         self.time_label.setText(self.window.format_time(datetime.now()))
+        self.date_label.setText(datetime.now().strftime("%Y-%m-%d"))
 
     def mousePressEvent(self, event):
         # Swallow clicks so the paused app doesn't receive them.
@@ -1024,7 +1280,7 @@ class SoftwareHomeBarWidget(QWidget):
 
 
 class Deletescape(QMainWindow):
-    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True, embed: bool = False):
+    def __init__(self, *, show_lock_screen_on_start: bool = True, full_screen: bool = True, embed: bool = False, embedTV: bool = False,):
         super().__init__()
 
         log.info("Deletescape init")
@@ -1057,6 +1313,7 @@ class Deletescape(QMainWindow):
         )
 
         self.embed = embed
+        self.embedTV = embedTV
         self.embedapp = None
         self.active_app = None
         self.active_app_id: str | None = None
@@ -1072,6 +1329,7 @@ class Deletescape(QMainWindow):
         self._running_apps: dict[str, RunningApp] = {}
         self._terminating_apps: dict[str, RunningApp] = {}
         self._boot_webengine_preload_view: QWidget | None = None
+        self.media_sessions = MediaSessionManager(self)
 
         # Root UI stays constant: status bar + app content host.
         self.root = QWidget(self)
@@ -1085,8 +1343,9 @@ class Deletescape(QMainWindow):
         self.root.setLayout(root_layout)
 
         if not embed:
-            self.status_bar = StatusBarWidget(window=self)
-            root_layout.addWidget(self.status_bar)
+            if not embedTV:
+                self.status_bar = StatusBarWidget(window=self)
+                root_layout.addWidget(self.status_bar)
 
         self.content_host = QWidget(self.root)
         self._content_stack = QStackedLayout()
@@ -1107,13 +1366,15 @@ class Deletescape(QMainWindow):
         root_layout.addWidget(self.content_host)
 
         if not embed:
-            self.software_home_bar: QWidget | None = None
-            if not bool(getattr(self.device, 'has_hw_home', True)):
-                self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
-                root_layout.addWidget(self.software_home_bar)
+            if not embedTV:
+                self.software_home_bar: QWidget | None = None
+                if not bool(getattr(self.device, 'has_hw_home', True)):
+                    self.software_home_bar = SoftwareHomeBarWidget(window=self, parent=self.root)
+                    root_layout.addWidget(self.software_home_bar)
 
         # Overlay rendered inside the main window.
         self.control_center = ControlCenterOverlay(window=self, parent=self.root)
+        self.media_sessions.session_changed.connect(self.control_center.set_media_session)
         self.control_center.setGraphicsEffect(self._control_center_opacity)
         self._control_center_opacity.setOpacity(0.0)
         self._control_center_anim = QPropertyAnimation(self.control_center, b"geometry", self)
@@ -1189,6 +1450,26 @@ class Deletescape(QMainWindow):
                 self.launch_app("kioskinfo")
             except:
                 pass
+        
+        elif embedTV:
+
+            try:
+                # We need this to launch the app, otherwise it will just bounce
+                self._locked = False 
+                self._has_unlocked_once = True
+
+                # Now hide the lockscreen
+                self.lock_screen.setVisible(False) 
+                self.lock_screen.date_label.setVisible(False)
+                self.lock_screen.time_label.setVisible(False)
+                self.lock_screen.hint_label.setVisible(False)
+                self._show_lock_overlay(False)
+                
+                # Now launch the app
+                self.launch_app("tvhome")
+            except:
+                pass
+        
         else:  
             self.status_bar._update_time()
             # Device starts locked by default, but boot may defer displaying the lock screen.
@@ -1240,6 +1521,8 @@ class Deletescape(QMainWindow):
     def show_startup_lock_screen(self) -> None:
         """Show the initial lock screen overlay and log startup timing once."""
         if self.embed:
+            return
+        if self.embedTV:
             return
         try:
             self._locked = True
@@ -1557,6 +1840,114 @@ class Deletescape(QMainWindow):
 
         self.run_on_ui_thread(lambda: self._notify_ui(title=title, message=message, duration_ms=duration_ms, app_id=app_id))
 
+    def _set_media_session_ui(
+        self,
+        *,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        artwork_path: str = "",
+        position_ms: int | None = None,
+        duration_ms: int | None = None,
+        playback_state: str = "playing",
+        controls: dict | None = None,
+        app_id: str | None = None,
+    ) -> MediaSession | None:
+        """UI-thread-only media session update implementation."""
+
+        if app_id is None:
+            app_id = self.active_app_id or ""
+        app_id = str(app_id or "").strip()
+        if not app_id:
+            return None
+
+        log.debug(
+            "Media session update",
+            extra={
+                "app_id": app_id,
+                "title": str(title or ""),
+                "playback_state": str(playback_state or ""),
+                "has_artwork": bool(artwork_path),
+            },
+        )
+        try:
+            return self.media_sessions.set_session(
+                app_id=app_id,
+                title=title,
+                artist=artist,
+                album=album,
+                artwork_path=artwork_path,
+                position_ms=position_ms,
+                duration_ms=duration_ms,
+                playback_state=playback_state,
+                controls=controls,
+            )
+        except Exception:
+            log.exception("Media session update failed", extra={"app_id": app_id})
+            return None
+
+    def set_media_session(
+        self,
+        *,
+        title: str = "",
+        artist: str = "",
+        album: str = "",
+        artwork_path: str = "",
+        position_ms: int | None = None,
+        duration_ms: int | None = None,
+        playback_state: str = "playing",
+        controls: dict | None = None,
+        app_id: str | None = None,
+    ) -> None:
+        """Publish media metadata/progress and optional OS control callbacks.
+
+        Apps can call this while audio or video is active:
+        `self.window.set_media_session(title="Song", playback_state="playing", controls={"pause": self.pause})`.
+        """
+
+        self.run_on_ui_thread(
+            lambda: self._set_media_session_ui(
+                title=title,
+                artist=artist,
+                album=album,
+                artwork_path=artwork_path,
+                position_ms=position_ms,
+                duration_ms=duration_ms,
+                playback_state=playback_state,
+                controls=controls,
+                app_id=app_id,
+            )
+        )
+
+    update_media_session = set_media_session
+
+    def clear_media_session(self, *, app_id: str | None = None) -> None:
+        """Clear the current media session for an app."""
+
+        if app_id is None:
+            app_id = self.active_app_id or ""
+        app_id = str(app_id or "").strip()
+        if not app_id:
+            return
+        self.run_on_ui_thread(lambda: self.media_sessions.clear_session(app_id))
+
+    def get_active_media_session(self) -> MediaSession | None:
+        """Return the media session that quick settings should display."""
+
+        try:
+            return self.media_sessions.active_session()
+        except Exception:
+            return None
+
+    def send_media_command(self, command: str, *, app_id: str | None = None, **payload) -> bool:
+        """Send a media command to the active session or a specific app session."""
+
+        try:
+            return bool(self.media_sessions.dispatch_command(command, app_id=app_id, **payload))
+        except Exception:
+            log.exception("Media command dispatch failed", extra={"app_id": str(app_id or ""), "command": str(command)})
+            return False
+
     def enable_background(self, enabled: bool = True, *, app_id: str | None = None) -> None:
         """Opt the given app into staying alive when not foreground."""
 
@@ -1610,6 +2001,49 @@ class Deletescape(QMainWindow):
 
         dcim_dir = get_user_data_layout(Path(__file__).resolve().parent).user_dcim
         return request_photo_from_gallery(self, dcim_dir=dcim_dir, title=title, instruction=instruction)
+
+    # ---------------------------------------------------------
+    # App API: audio output
+    # ---------------------------------------------------------
+    def get_audio_info(self) -> AudioInfo:
+        """Return best-effort volume, mute, and output-device state for apps."""
+
+        try:
+            return get_audio_info()
+        except Exception:
+            return AudioInfo()
+
+    def list_audio_output_devices(self) -> list[AudioDevice]:
+        """Return output devices from the active audio driver."""
+
+        try:
+            return list_audio_output_devices()
+        except Exception:
+            return []
+
+    def set_audio_volume(self, percent: int) -> bool:
+        """Set output volume through the active audio driver."""
+
+        try:
+            return bool(set_audio_volume(percent))
+        except Exception:
+            return False
+
+    def set_audio_muted(self, muted: bool) -> bool:
+        """Set output mute through the active audio driver."""
+
+        try:
+            return bool(set_audio_muted(muted))
+        except Exception:
+            return False
+
+    def set_audio_output_device(self, device_id: str) -> bool:
+        """Select the active output device through the active audio driver."""
+
+        try:
+            return bool(set_audio_output_device(device_id))
+        except Exception:
+            return False
 
     # ---------------------------------------------------------
     # App API: location / GPS
@@ -1702,6 +2136,10 @@ class Deletescape(QMainWindow):
             log.debug("Terminate app: already terminating", extra={"app_id": str(app_id)})
             return
 
+        if app_id == "home":
+            log.debug("Terminate app: we can't kill our homescreen", extra={"app_id": str(app_id)})
+            return
+
         running = self._running_apps.pop(app_id, None)
         if running is None:
             log.debug("Terminate app: not running", extra={"app_id": str(app_id)})
@@ -1715,6 +2153,12 @@ class Deletescape(QMainWindow):
                 hook()
         except Exception:
             log.exception("App on_quit hook failed", extra={"app_id": str(app_id)})
+            pass
+
+        try:
+            self.media_sessions.clear_session(app_id)
+        except Exception:
+            log.exception("Failed to clear media session for app", extra={"app_id": str(app_id)})
             pass
 
         try:
@@ -2184,6 +2628,7 @@ class Deletescape(QMainWindow):
 
         crashed_app_id = self.active_app_id
         crashed_name = crashed_app_id or "Unable to get the crashed app name. This is yet another kludge, as an app should not have a name this long. #freetillie"
+        fname = None
         try:
             if crashed_app_id in self.apps:
                 crashed_name = self.apps[crashed_app_id].display_name or crashed_app_id
@@ -2227,6 +2672,21 @@ class Deletescape(QMainWindow):
                 log.exception("Failed to write app panic report. Whoops!")
 
             try:
+                manager = getattr(self, "kangel_manager", None)
+                recorder = getattr(manager, "record_app_crash", None)
+                if callable(recorder):
+                    recorder(
+                        exc_type,
+                        exc,
+                        tb,
+                        app_id=crashed_app_id,
+                        app_name=crashed_name,
+                        report_path=str(fname) if fname is not None else None,
+                    )
+            except Exception:
+                log.exception("Failed to notify KAngel about app crash")
+
+            try:
                 if crashed_name == "Unable to get the crashed app name. This is yet another kludge, as an app should not have a name this long. #freetillie":
 
                     # if we are given this klduge as the app name, assume pre-init
@@ -2243,7 +2703,7 @@ class Deletescape(QMainWindow):
                     QMessageBox.critical(
                         self,
                         "App crashed",
-                        f"{crashed_name} (id: {crashed_app_id if crashed_app_id is not None else ''}) experienced an error and had to be closed.\nA crash dump was saved to {fname}",
+                        f"{crashed_name} (id: {crashed_app_id if crashed_app_id is not None else ''}) experienced an error and had to be closed.\nA crash dump was saved to {fname if fname is not None else '(not saved)'}",
                     )
             except Exception:
                 # something is very wrong
@@ -2496,6 +2956,10 @@ class Deletescape(QMainWindow):
         self._control_center_open = True
 
         self._sync_overlay_geometry()
+        try:
+            self.control_center.set_media_session(self.get_active_media_session())
+        except Exception:
+            pass
         # Capture the current UI (behind the overlay), blur it, and use it as the background.
         try:
             QApplication.processEvents()
@@ -2522,8 +2986,9 @@ class Deletescape(QMainWindow):
     # ---------------------------------------------------------
     def launch_app(self, name):
         if self._locked:
-            log.warning("Attempting to open app while locked, ignoring...", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
-            return
+            if not self.embedTV:
+                log.warning("Attempting to open app while locked, ignoring...", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
+                return
 
         if name == 'home' and not self.is_setup_completed() and 'setupwizard' in self.apps:
             log.warning("Attempting to go home during setup, going to setup instead...", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
@@ -2533,6 +2998,15 @@ class Deletescape(QMainWindow):
         if name not in self.apps:
             log.warning("App does not exist, ignoring", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
             return
+        
+        # Make sure we use the alternate homescreen implementations if needed
+        # Hacky workaround for apps that directly launch home
+        if name == "home":
+            if self.embedTV:
+                name = "tvhome"
+            else:
+                if self.embed:
+                    name = "kioskinfo"
 
         log.info("Launch app", extra={"app_id": str(name), "prev_app_id": str(self.active_app_id or "")})
 

@@ -1,0 +1,18 @@
+{
+  "manufacturer": "LG",
+  "model": "hammerhead",
+  "model_name": "Google Nexus 5",
+  "arch": "armv7l",
+  "has_hw_home": false,
+  "drivers": {
+    "battery": "upower",
+    "modem": "none",
+    "location": "none",
+    "wifi": "nmcli",
+    "display": "none",
+    "audio": "linux",
+    "sensors": "none",
+    "vibration": "none",
+    "thermals": "none"
+  }
+}

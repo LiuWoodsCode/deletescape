@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QStackedLayout,
 )
-from PySide6.QtCore import QEvent, QObject, Qt, QSize
+from PySide6.QtCore import QEvent, QObject, Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QFont, QFontMetrics
 
 from wallpaper import load_pixmap, scale_crop_center
@@ -29,15 +29,21 @@ class App(QObject):
         self._apps_per_page = 20
         self._grid_margin_x = 18
         self._grid_margin_top = 18
-        self._grid_spacing_x = 12
+        self._grid_spacing_x = 16
         self._grid_spacing_y = 14
         self._label_font_size_pt = 9
         self._icon_px = 72
         self._page_dots_height_px = 18
 
         self._current_page = 0
+        self._page_selection_indices: list[int] = []
         self._page_buttons: list[list[QToolButton]] = []
         self._dot_labels: list[QLabel] = []
+        self._icon_cache: dict[tuple[str, int], QIcon] = {}
+        self._wallpaper_render_scheduled = False
+        self._selected_app_id: str | None = None
+        self._keyboard_activity_timer: QTimer | None = None
+        self._keyboard_focus_visible = False
 
         self._wallpaper_pix = None
         # Stack the wallpaper behind the UI so it always renders.
@@ -60,6 +66,7 @@ class App(QObject):
         stack.addWidget(self._bg)
 
         self._fg = QWidget(container)
+        self._fg.setFocusPolicy(Qt.StrongFocus)
         stack.addWidget(self._fg)
 
         # Ensure the UI layer is active/visible.
@@ -139,7 +146,7 @@ class App(QObject):
 
         # Apply max row limit
         if self._max_grid_cols is not None:
-            cols = min(rows, self._max_grid_cols)
+            cols = min(cols, self._max_grid_cols)
 
         new_capacity = int(cols * rows)
 
@@ -148,6 +155,7 @@ class App(QObject):
             self._grid_cols = int(cols)
             self._apps_per_page = new_capacity
             self._rebuild_buttons()
+            self._apply_styles()
             self._render_wallpaper()
 
     def _sorted_visible_apps(self):
@@ -164,11 +172,21 @@ class App(QObject):
         return []
 
     def _make_rounded_icon(self, icon_path: str | None, size_px: int) -> QIcon:
+        cache_key = (str(icon_path or ''), int(size_px))
+        cached = self._icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if not icon_path:
-            return self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            icon = self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            self._icon_cache[cache_key] = icon
+            return icon
+
         pix = QPixmap(str(icon_path))
         if pix.isNull():
-            return self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            icon = self.window.style().standardIcon(QStyle.SP_DesktopIcon)
+            self._icon_cache[cache_key] = icon
+            return icon
 
         target = QSize(size_px, size_px)
         scaled = pix.scaled(target, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
@@ -188,7 +206,9 @@ class App(QObject):
         painter.drawPixmap(0, 0, cropped)
         painter.end()
 
-        return QIcon(out)
+        icon = QIcon(out)
+        self._icon_cache[cache_key] = icon
+        return icon
 
     def _find_app_by_id(self, app_id: str):
             """Return the first visible app matching app_id, else None."""
@@ -205,7 +225,8 @@ class App(QObject):
     
     def _make_app_button(self, app, *, icon_px: int, show_label: bool) -> QWidget:
         wrapper = QWidget(self._fg)
-        icon_px = self._icon_px
+        wrapper.setFocusPolicy(Qt.StrongFocus)
+        wrapper.installEventFilter(self)
         lay = QVBoxLayout()
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
@@ -215,16 +236,19 @@ class App(QObject):
         btn = QToolButton(wrapper)
         btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
         btn.setIconSize(QSize(icon_px, icon_px))
-        
+        btn.setFocusPolicy(Qt.NoFocus)
         btn.setAutoRaise(True)
         btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn.setFixedSize(icon_px + 8, icon_px + 8)
 
         icon = self._make_rounded_icon(getattr(app, 'icon_path', None), icon_px)
         btn.setIcon(icon)
 
+        btn.pressed.connect(lambda w=wrapper: w.setFocus())
         btn.clicked.connect(lambda _, n=app.app_id: self.window.launch_app(n))
 
         lay.addWidget(btn, 0, Qt.AlignHCenter)
+        wrapper.setProperty('_btn', btn)
 
         if show_label:
             lbl = QLabel(app.display_name, wrapper)
@@ -255,7 +279,10 @@ class App(QObject):
             lbl.setText("\n".join(lines))
 
             lay.addWidget(lbl, 0, Qt.AlignHCenter)
+            wrapper.setProperty('_lbl', lbl)
 
+        wrapper.setProperty('appId', str(app.app_id))
+        wrapper.setProperty('selected', False)
         return wrapper
 
     def _clear_layout(self, layout):
@@ -277,9 +304,11 @@ class App(QObject):
         self._clear_layout(self._dots_row)
         self._dot_labels = []
         self._page_buttons = []
+        self._page_selection_indices = []
 
         visible_apps = self._sorted_visible_apps()
         grid_apps = list(visible_apps)
+        selected_app_id = str(self._selected_app_id or '').strip()
 
         # Build pages.
         pages = [grid_apps[i:i + self._apps_per_page] for i in range(0, len(grid_apps), self._apps_per_page)]
@@ -303,6 +332,12 @@ class App(QObject):
             v.addStretch(1)
 
             buttons: list[QToolButton] = []
+            selected_index = 0
+            if selected_app_id:
+                for app_idx, app in enumerate(page_apps):
+                    if str(getattr(app, 'app_id', '')).strip() == selected_app_id:
+                        selected_index = app_idx
+                        break
             for idx, app in enumerate(page_apps):
                 r = idx // self._grid_cols
                 c = idx % self._grid_cols
@@ -310,6 +345,7 @@ class App(QObject):
                 grid.addWidget(btn, r, c)
                 buttons.append(btn)
             self._page_buttons.append(buttons)
+            self._page_selection_indices.append(min(selected_index, max(0, len(buttons) - 1)))
             self._pages_layout.addWidget(page)
 
             # Dot indicator.
@@ -322,6 +358,7 @@ class App(QObject):
             self._dot_labels.append(dot)
 
         self._set_page(min(self._current_page, self._pages_layout.count() - 1))
+        self._sync_selection_state(focus=False)
 
     def _set_page(self, index: int) -> None:
         index = max(0, min(int(index), self._pages_layout.count() - 1))
@@ -331,6 +368,218 @@ class App(QObject):
         except Exception:
             pass
         self._update_page_dots()
+        self._sync_selection_state(focus=False)
+
+    def _all_tile_widgets(self):
+        for page_buttons in self._page_buttons:
+            for widget in page_buttons:
+                yield widget
+
+    def _is_tile_widget(self, obj) -> bool:
+        for widget in self._all_tile_widgets():
+            if widget is obj:
+                return True
+        return False
+
+    def _current_page_buttons(self) -> list[QToolButton]:
+        if 0 <= self._current_page < len(self._page_buttons):
+            return self._page_buttons[self._current_page]
+        return []
+
+    def _current_selection_index(self) -> int:
+        if 0 <= self._current_page < len(self._page_selection_indices):
+            return self._page_selection_indices[self._current_page]
+        return 0
+
+    def _selected_widget_for_current_page(self):
+        buttons = self._current_page_buttons()
+        if not buttons:
+            return None
+        index = max(0, min(self._current_selection_index(), len(buttons) - 1))
+        return buttons[index]
+
+    def _sync_selection_state(self, *, focus: bool, show_highlight: bool | None = None) -> None:
+        if show_highlight is None:
+            show_highlight = self._keyboard_focus_visible
+        for page_idx, buttons in enumerate(self._page_buttons):
+            selected_index = self._page_selection_indices[page_idx] if page_idx < len(self._page_selection_indices) else 0
+            for idx, widget in enumerate(buttons):
+                is_selected = page_idx == self._current_page and idx == selected_index
+                widget.setProperty('selected', is_selected)
+                btn = widget.property('_btn')
+                if btn and is_selected and show_highlight:
+                    btn.setStyleSheet('QToolButton { background: rgba(255, 255, 255, 20); border: 2px solid rgba(255, 255, 255, 150); border-radius: 10px; padding: 2px; }')
+                elif btn:
+                    btn.setStyleSheet('QToolButton { background: transparent; border: 2px solid transparent; border-radius: 10px; padding: 2px; }')
+
+        selected_widget = self._selected_widget_for_current_page()
+        if focus and selected_widget is not None:
+            try:
+                selected_widget.setFocus()
+            except Exception:
+                pass
+
+    def _set_selection(self, page_index: int, tile_index: int, *, focus: bool = True) -> None:
+        if not self._page_buttons:
+            return
+
+        page_index = max(0, min(int(page_index), len(self._page_buttons) - 1))
+        buttons = self._page_buttons[page_index]
+
+        while len(self._page_selection_indices) < len(self._page_buttons):
+            self._page_selection_indices.append(0)
+
+        if not buttons:
+            self._current_page = page_index
+            self._page_selection_indices[page_index] = 0
+            self._selected_app_id = None
+            self._sync_selection_state(focus=focus)
+            return
+
+        tile_index = max(0, min(int(tile_index), len(buttons) - 1))
+        self._current_page = page_index
+        self._page_selection_indices[page_index] = tile_index
+
+        selected_widget = buttons[tile_index]
+        self._selected_app_id = str(selected_widget.property('appId') or '') or None
+        try:
+            self._pages_layout.setCurrentIndex(page_index)
+        except Exception:
+            pass
+        self._update_page_dots()
+        self._sync_selection_state(focus=focus)
+
+    def _launch_selected_app(self) -> None:
+        selected_widget = self._selected_widget_for_current_page()
+        if selected_widget is None:
+            return
+        app_id = str(selected_widget.property('appId') or '').strip()
+        if not app_id:
+            return
+        try:
+            self.window.launch_app(app_id)
+        except Exception:
+            pass
+
+    def _move_selection(self, row_delta: int, col_delta: int) -> None:
+        buttons = self._current_page_buttons()
+        if not buttons:
+            return
+
+        cols = max(1, int(self._grid_cols))
+        current_index = self._current_selection_index()
+        current_row = current_index // cols
+        current_col = current_index % cols
+        new_row = current_row + int(row_delta)
+        new_col = current_col + int(col_delta)
+        new_index = new_row * cols + new_col
+
+        if 0 <= new_index < len(buttons):
+            self._set_selection(self._current_page, new_index)
+            return
+
+        if col_delta < 0 and new_col < 0 and self._current_page > 0:
+            previous_buttons = self._page_buttons[self._current_page - 1]
+            self._set_selection(self._current_page - 1, len(previous_buttons) - 1)
+            return
+
+        if col_delta > 0 and new_col >= cols and self._current_page + 1 < len(self._page_buttons):
+            self._set_selection(self._current_page + 1, 0)
+            return
+
+        if row_delta < 0 and new_row < 0 and self._current_page > 0:
+            previous_buttons = self._page_buttons[self._current_page - 1]
+            self._set_selection(self._current_page - 1, min(len(previous_buttons) - 1, current_col))
+            return
+
+        if row_delta > 0 and new_row * cols >= len(buttons) and self._current_page + 1 < len(self._page_buttons):
+            next_buttons = self._page_buttons[self._current_page + 1]
+            self._set_selection(self._current_page + 1, min(len(next_buttons) - 1, current_col))
+
+    def _go_to_first_tile(self) -> None:
+        if self._current_page_buttons():
+            self._set_selection(self._current_page, 0)
+
+    def _go_to_last_tile(self) -> None:
+        buttons = self._current_page_buttons()
+        if buttons:
+            self._set_selection(self._current_page, len(buttons) - 1)
+
+    def _go_to_previous_page(self) -> None:
+        if self._current_page <= 0:
+            return
+        previous_buttons = self._page_buttons[self._current_page - 1]
+        target_index = min(len(previous_buttons) - 1, self._current_selection_index()) if previous_buttons else 0
+        self._set_selection(self._current_page - 1, target_index)
+
+    def _go_to_next_page(self) -> None:
+        if self._current_page + 1 >= len(self._page_buttons):
+            return
+        next_buttons = self._page_buttons[self._current_page + 1]
+        target_index = min(len(next_buttons) - 1, self._current_selection_index()) if next_buttons else 0
+        self._set_selection(self._current_page + 1, target_index)
+
+    def _show_keyboard_focus(self) -> None:
+        """Show keyboard focus highlight and start/reset the hide timer."""
+        if not self._keyboard_focus_visible:
+            self._keyboard_focus_visible = True
+            self._sync_selection_state(focus=False, show_highlight=True)
+        self._reset_keyboard_activity_timer()
+
+    def _hide_keyboard_focus(self) -> None:
+        """Hide keyboard focus highlight."""
+        if self._keyboard_activity_timer is not None:
+            self._keyboard_activity_timer.stop()
+            self._keyboard_activity_timer = None
+        if self._keyboard_focus_visible:
+            self._keyboard_focus_visible = False
+            self._sync_selection_state(focus=False, show_highlight=False)
+
+    def _reset_keyboard_activity_timer(self) -> None:
+        """Reset the 5-second inactivity timer."""
+        if self._keyboard_activity_timer is not None:
+            self._keyboard_activity_timer.stop()
+        else:
+            self._keyboard_activity_timer = QTimer()
+            self._keyboard_activity_timer.timeout.connect(self._hide_keyboard_focus)
+        self._keyboard_activity_timer.start(5000)  # 5 seconds
+
+    def _handle_key_navigation(self, event) -> bool:
+        self._show_keyboard_focus()
+        key = event.key()
+
+        if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self._launch_selected_app()
+            return True
+
+        if key == Qt.Key_Left:
+            self._move_selection(0, -1)
+            return True
+        if key == Qt.Key_Right:
+            self._move_selection(0, 1)
+            return True
+        if key == Qt.Key_Up:
+            self._move_selection(-1, 0)
+            return True
+        if key == Qt.Key_Down:
+            self._move_selection(1, 0)
+            return True
+
+        if key == Qt.Key_PageUp:
+            self._go_to_previous_page()
+            return True
+        if key == Qt.Key_PageDown:
+            self._go_to_next_page()
+            return True
+
+        if key == Qt.Key_Home:
+            self._go_to_first_tile()
+            return True
+        if key == Qt.Key_End:
+            self._go_to_last_tile()
+            return True
+
+        return False
 
     def _update_page_dots(self) -> None:
         pages = self._pages_layout.count()
@@ -345,6 +594,16 @@ class App(QObject):
         """Dock removed for now (kept for compatibility)."""
         return QColor(0, 0, 0, 0)
 
+    def _schedule_wallpaper_render(self) -> None:
+        if self._wallpaper_render_scheduled:
+            return
+        self._wallpaper_render_scheduled = True
+        QTimer.singleShot(0, self._flush_wallpaper_render)
+
+    def _flush_wallpaper_render(self) -> None:
+        self._wallpaper_render_scheduled = False
+        self._render_wallpaper()
+
     def _apply_styles(self) -> None:
         # Transparent surfaces over wallpaper.
         self._fg.setStyleSheet('background: transparent;')
@@ -356,9 +615,10 @@ class App(QObject):
         common_btn_css = (
             'QToolButton { '
             'background: transparent; '
-            'border: none; '
+            'border: 2px solid transparent; '
+            'border-radius: 10px; '
+            'padding: 2px; '
             'color: rgba(255, 255, 255, 235); '
-            'padding: 0px; '
             '}'
             'QToolButton:pressed { '
             'color: rgba(255, 255, 255, 255); '
@@ -395,19 +655,26 @@ class App(QObject):
                 tile.setFixedSize(cell_w, cell_h)
 
     def _next_page(self) -> None:
-        if self._pages_layout.count() <= 1:
-            return
-        self._set_page((self._current_page + 1) % self._pages_layout.count())
+        self._go_to_next_page()
 
     def _prev_page(self) -> None:
-        if self._pages_layout.count() <= 1:
-            return
-        self._set_page((self._current_page - 1) % self._pages_layout.count())
+        self._go_to_previous_page()
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and (obj is self._fg or self._is_tile_widget(obj)):
+            if self._handle_key_navigation(event):
+                return True
+        if event.type() == QEvent.FocusIn and self._is_tile_widget(obj):
+            try:
+                page_index = next((idx for idx, page in enumerate(self._page_buttons) if obj in page), self._current_page)
+                tile_index = self._page_buttons[page_index].index(obj)
+                self._set_selection(page_index, tile_index, focus=False)
+            except Exception:
+                pass
+            return False
         if obj is self._fg and event.type() == QEvent.Resize:
             self._recompute_grid_capacity()
-            self._render_wallpaper()
+            self._schedule_wallpaper_render()
             return super().eventFilter(obj, event)
         if obj is self._fg and event.type() == QEvent.Wheel:
             # Simple paging like iOS: scroll to change pages.
@@ -428,7 +695,7 @@ class App(QObject):
             self._wallpaper_pix = load_pixmap(path)
         except Exception:
             self._wallpaper_pix = None
-        self._render_wallpaper()
+        self._schedule_wallpaper_render()
         # Re-apply styles in case dark mode changed.
         try:
             self._apply_styles()

@@ -491,8 +491,8 @@ class WaylandWindowCollector:
 
 
 class Taskbar(Gtk.Window):
-    HEIGHT = 40
-    ICON_SIZE = 26
+    HEIGHT = 48
+    ICON_SIZE = 32
 
     def __init__(self):
         super().__init__(title="Taskbar")
@@ -521,10 +521,6 @@ class Taskbar(Gtk.Window):
 
         self._install_css()
         self._box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        self._box.set_margin_start(4)
-        self._box.set_margin_end(4)
-        self._box.set_margin_top(4)
-        self._box.set_margin_bottom(4)
         self.add(self._box)
 
         left_spacer = Gtk.Box()

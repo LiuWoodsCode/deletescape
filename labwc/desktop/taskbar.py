@@ -22,7 +22,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GtkLayerShell", "0.1")
-from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, GtkLayerShell, Pango
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, GtkLayerShell
 
 
 SHELL_BUS_NAME = "org.deletescapeos.Shell2"
@@ -492,7 +492,7 @@ class WaylandWindowCollector:
 
 class Taskbar(Gtk.Window):
     HEIGHT = 40
-    ICON_SIZE = 18
+    ICON_SIZE = 26
 
     def __init__(self):
         super().__init__(title="Taskbar")
@@ -520,12 +520,32 @@ class Taskbar(Gtk.Window):
         GtkLayerShell.set_namespace(self, "deletescape-taskbar")
 
         self._install_css()
-        self._box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self._box.set_margin_start(4)
         self._box.set_margin_end(4)
         self._box.set_margin_top(4)
         self._box.set_margin_bottom(4)
         self.add(self._box)
+
+        left_spacer = Gtk.Box()
+        right_spacer = Gtk.Box()
+        left_spacer.set_hexpand(True)
+        right_spacer.set_hexpand(True)
+
+        self._task_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._task_group.set_halign(Gtk.Align.CENTER)
+
+        self._apps_button = Gtk.Button(label="Apps")
+        self._apps_button.get_style_context().add_class("apps-button")
+        self._apps_button.set_tooltip_text("Apps")
+        self._task_group.pack_start(self._apps_button, False, False, 0)
+
+        self._task_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        self._task_group.pack_start(self._task_box, False, False, 0)
+
+        self._box.pack_start(left_spacer, True, True, 0)
+        self._box.pack_start(self._task_group, False, False, 0)
+        self._box.pack_start(right_spacer, True, True, 0)
 
         self.refresh()
         GLib.timeout_add(100, self._refresh_tick)
@@ -537,16 +557,24 @@ class Taskbar(Gtk.Window):
             color: white;
             font-size: 12px;
         }
-        button.taskbar-button {
+        button.taskbar-button,
+        button.apps-button {
             background: #303030;
             border: 1px solid #505050;
             border-radius: 0;
             color: white;
             min-height: 28px;
-            min-width: 92px;
-            padding: 4px 10px;
+            padding: 1px 6px;
         }
-        button.taskbar-button:hover {
+        button.taskbar-button {
+            min-width: 34px;
+        }
+        button.apps-button {
+            min-width: 64px;
+            padding: 1px 10px;
+        }
+        button.taskbar-button:hover,
+        button.apps-button:hover {
             background: #404040;
         }
         button.taskbar-button.active {
@@ -862,7 +890,7 @@ class Taskbar(Gtk.Window):
         new_keys = set(groups)
         for key in sorted(old_keys - new_keys):
             button = self._buttons.pop(key)
-            self._box.remove(button)
+            self._task_box.remove(button)
 
         for key in sorted(new_keys - old_keys):
             button = Gtk.Button()
@@ -870,7 +898,7 @@ class Taskbar(Gtk.Window):
             button.connect("clicked", self._on_button_clicked, key)
             button.connect("button-press-event", self._on_button_press, key)
             self._buttons[key] = button
-            self._box.pack_start(button, False, False, 0)
+            self._task_box.pack_start(button, False, False, 0)
 
         self._groups = groups
         for key, button in self._buttons.items():
@@ -878,22 +906,19 @@ class Taskbar(Gtk.Window):
         self.show_all()
 
     def _update_button(self, button: Gtk.Button, windows: list[WindowInfo]) -> None:
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
         first = windows[0] if windows else None
         icon = self._window_icon_image(first) if first is not None else None
         if icon is not None:
             box.pack_start(icon, False, False, 0)
 
-        label = Gtk.Label(label=self._group_label(windows))
-        label.set_ellipsize(Pango.EllipsizeMode.END)
-        label.set_xalign(0)
-        box.pack_start(label, True, True, 0)
-
         current = button.get_child()
         if current is not None:
             button.remove(current)
         button.add(box)
-        button.set_tooltip_text("\n".join(window.title for window in windows))
+        button.set_tooltip_text(self._group_tooltip(windows))
 
         style = button.get_style_context()
         if any(window.active for window in windows):
@@ -910,6 +935,13 @@ class Taskbar(Gtk.Window):
         if len(windows) > 1:
             return f"{name} ({len(windows)})"
         return name or first.title
+
+    def _group_tooltip(self, windows: list[WindowInfo]) -> str:
+        label = self._group_label(windows)
+        titles = [window.title for window in windows if window.title and window.title != label]
+        if not titles:
+            return label
+        return "\n".join([label, *titles])
 
     def _icon_image(self, icon_path: str) -> Gtk.Image | None:
         if not icon_path:

@@ -22,7 +22,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GtkLayerShell", "0.1")
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk, GtkLayerShell, Pango
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk, GtkLayerShell, Pango
 
 
 SHELL_BUS_NAME = "org.deletescapeos.Shell2"
@@ -502,6 +502,7 @@ class Taskbar(Gtk.Window):
         self._running_apps: dict[str, RunningAppInfo] = {}
         self._groups: dict[str, list[WindowInfo]] = {}
         self._buttons: dict[str, Gtk.Button] = {}
+        self._desktop_icon_cache: dict[tuple[str, str], tuple[str, str]] = {}
 
         self.set_decorated(False)
         self.set_resizable(False)
@@ -879,8 +880,7 @@ class Taskbar(Gtk.Window):
     def _update_button(self, button: Gtk.Button, windows: list[WindowInfo]) -> None:
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         first = windows[0] if windows else None
-        icon_path = self._apps.get(first.app_id).icon_path if first and first.app_id in self._apps else ""
-        icon = self._icon_image(icon_path)
+        icon = self._window_icon_image(first) if first is not None else None
         if icon is not None:
             box.pack_start(icon, False, False, 0)
 
@@ -926,6 +926,173 @@ class Taskbar(Gtk.Window):
         image = Gtk.Image.new_from_pixbuf(pixbuf)
         image.set_size_request(self.ICON_SIZE, self.ICON_SIZE)
         return image
+
+    def _window_icon_image(self, window: WindowInfo) -> Gtk.Image | None:
+        for icon_path in self._window_icon_paths(window):
+            icon = self._icon_image(icon_path)
+            if icon is not None:
+                return icon
+
+        for icon_name in self._window_icon_names(window):
+            icon = self._themed_icon_image(icon_name)
+            if icon is not None:
+                return icon
+
+        icon_kind, icon_value = self._desktop_icon_spec(window.app_id, window.title)
+        if icon_kind == "path":
+            icon = self._icon_image(icon_value)
+        elif icon_kind == "theme":
+            icon = self._themed_icon_image(icon_value)
+        else:
+            icon = None
+        if icon is not None:
+            return icon
+
+        return (
+            self._themed_icon_image("application-x-executable")
+            or self._themed_icon_image("application-default-icon")
+        )
+
+    def _window_icon_paths(self, window: WindowInfo) -> list[str]:
+        paths = []
+        if window.app_id in self._apps:
+            paths.append(self._apps[window.app_id].icon_path)
+        if window.app_id in self._running_apps:
+            paths.append(self._running_apps[window.app_id].icon_path)
+        for key in ("icon_path", "iconPath", "icon", "app_icon", "appIcon"):
+            value = str(window.raw.get(key) or "").strip()
+            if value and (value.startswith("/") or value.startswith("~")):
+                paths.append(os.path.expanduser(value))
+        return [path for path in paths if path]
+
+    def _window_icon_names(self, window: WindowInfo) -> list[str]:
+        names = []
+        for key in ("icon_name", "iconName", "icon", "app_icon_name", "appIconName"):
+            value = str(window.raw.get(key) or "").strip()
+            if value and not value.startswith("/") and not value.startswith("~"):
+                names.append(value)
+        return names
+
+    def _themed_icon_image(self, icon_name: str) -> Gtk.Image | None:
+        icon_name = str(icon_name or "").strip()
+        if not icon_name:
+            return None
+        theme = Gtk.IconTheme.get_default()
+        if theme is None:
+            return None
+        try:
+            pixbuf = theme.load_icon(icon_name, self.ICON_SIZE, Gtk.IconLookupFlags.FORCE_SIZE)
+        except Exception:
+            return None
+        image = Gtk.Image.new_from_pixbuf(pixbuf)
+        image.set_size_request(self.ICON_SIZE, self.ICON_SIZE)
+        return image
+
+    def _theme_has_icon(self, icon_name: str) -> bool:
+        theme = Gtk.IconTheme.get_default()
+        if theme is None:
+            return False
+        try:
+            return bool(theme.has_icon(icon_name))
+        except Exception:
+            return False
+
+    def _desktop_icon_spec(self, app_id: str, title: str = "") -> tuple[str, str]:
+        app_id = str(app_id or "").strip()
+        title = str(title or "").strip()
+        cache_key = (app_id, title)
+        if cache_key in self._desktop_icon_cache:
+            return self._desktop_icon_cache[cache_key]
+
+        desktop_app_info = getattr(Gio, "DesktopAppInfo", None)
+        for desktop_id in self._desktop_id_candidates(app_id):
+            try:
+                app_info = desktop_app_info.new(desktop_id) if desktop_app_info is not None else None
+            except Exception:
+                app_info = None
+            spec = self._icon_spec_from_gicon(app_info.get_icon() if app_info is not None else None)
+            if spec[0]:
+                self._desktop_icon_cache[cache_key] = spec
+                return spec
+
+        spec = self._desktop_file_icon_spec(app_id, title)
+        self._desktop_icon_cache[cache_key] = spec
+        return spec
+
+    def _desktop_id_candidates(self, app_id: str) -> list[str]:
+        values = []
+        app_id = str(app_id or "").strip()
+        if app_id:
+            values.extend([app_id, Path(app_id).name])
+            if not app_id.endswith(".desktop"):
+                values.extend([f"{app_id}.desktop", f"{Path(app_id).name}.desktop"])
+            normalized = self._normalize_name(app_id)
+            if normalized:
+                values.extend([normalized, f"{normalized}.desktop"])
+        result = []
+        seen = set()
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def _desktop_file_icon_spec(self, app_id: str, title: str) -> tuple[str, str]:
+        identity = {self._normalize_name(app_id), self._normalize_name(title)}
+        identity.discard("")
+        if not identity:
+            return ("", "")
+
+        for desktop_file in self._desktop_files():
+            try:
+                keyfile = GLib.KeyFile()
+                keyfile.load_from_file(str(desktop_file), GLib.KeyFileFlags.NONE)
+                icon = keyfile.get_string("Desktop Entry", "Icon")
+            except Exception:
+                continue
+            names = {self._normalize_name(desktop_file.stem)}
+            for key in ("StartupWMClass", "Name", "Exec"):
+                try:
+                    names.add(self._normalize_name(keyfile.get_string("Desktop Entry", key)))
+                except Exception:
+                    pass
+            names.discard("")
+            if identity.intersection(names):
+                if icon.startswith("/") or icon.startswith("~"):
+                    return ("path", os.path.expanduser(icon))
+                return ("theme", icon)
+        return ("", "")
+
+    def _desktop_files(self) -> list[Path]:
+        data_dirs = [Path.home() / ".local/share"]
+        for value in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"):
+            if value:
+                data_dirs.append(Path(value))
+
+        files = []
+        for data_dir in data_dirs:
+            applications = data_dir / "applications"
+            try:
+                files.extend(applications.rglob("*.desktop"))
+            except Exception:
+                continue
+        return files
+
+    def _icon_spec_from_gicon(self, icon) -> tuple[str, str]:
+        if icon is None:
+            return ("", "")
+        try:
+            if isinstance(icon, Gio.FileIcon):
+                path = icon.get_file().get_path()
+                return ("path", str(path or ""))
+            if isinstance(icon, Gio.ThemedIcon):
+                for name in icon.get_names():
+                    if self._theme_has_icon(name):
+                        return ("theme", str(name))
+        except Exception:
+            return ("", "")
+        return ("", "")
 
     def _on_button_clicked(self, _button: Gtk.Button, group_key: str) -> None:
         windows = self._groups.get(group_key, [])

@@ -5,6 +5,8 @@ import asyncio
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import threading
 import time
@@ -31,6 +33,7 @@ DEFAULT_OBJECT_PATH = "/org/deletescapeos/Shell2"
 DEFAULT_INTERFACE = "org.deletescapeos.Shell2"
 
 log = get_logger("host_shell")
+_ORIGINAL_SUBPROCESS_POPEN = subprocess.Popen
 
 
 @dataclass
@@ -97,6 +100,27 @@ def _remote_apps(payload: str) -> list[RemoteAppDescriptor]:
         except Exception:
             pass
     return result
+
+
+def _command_metadata(args: Any) -> dict[str, Any]:
+    argv: list[str]
+    if isinstance(args, (list, tuple)):
+        argv = [str(part) for part in args]
+    else:
+        try:
+            argv = shlex.split(str(args or ""))
+        except Exception:
+            argv = [str(args or "")]
+    executable = Path(argv[0]).name if argv else ""
+    stems = [executable]
+    if executable:
+        stems.append(Path(executable).stem)
+    return {
+        "argv": argv,
+        "command": " ".join(argv),
+        "executable": executable,
+        "match_names": sorted({name.lower() for name in stems if name}),
+    }
 
 
 class ShellDBusClient:
@@ -179,6 +203,7 @@ class HostedAppWindow(QMainWindow):
         self.device = DeviceConfigStore().load()
         self._app_instance = None
         self._closed_notified = False
+        self._patch_subprocess_tracking()
 
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setWindowFlags(Qt.Window)
@@ -243,6 +268,26 @@ class HostedAppWindow(QMainWindow):
 
     def _register_host(self) -> None:
         self._shell.fire_and_forget("RegisterHost", self.app_id, int(os.getpid()), not self._hidden)
+
+    def _patch_subprocess_tracking(self) -> None:
+        owner = self
+
+        class TrackingPopen(_ORIGINAL_SUBPROCESS_POPEN):
+            def __init__(self, *popen_args, **popen_kwargs):
+                super().__init__(*popen_args, **popen_kwargs)
+                try:
+                    command_args = popen_kwargs.get("args", popen_args[0] if popen_args else None)
+                    owner._report_launched_process(int(self.pid or 0), command_args)
+                except Exception:
+                    log.exception("Failed to report launched process", extra={"app_id": owner.app_id})
+
+        subprocess.Popen = TrackingPopen
+
+    def _report_launched_process(self, pid: int, args: Any) -> None:
+        if pid <= 0:
+            return
+        payload = _command_metadata(args)
+        self._shell.fire_and_forget("RegisterLaunchedProcess", self.app_id, int(pid), json.dumps(payload))
 
     def _notify_closed(self, exit_code: int = 0) -> None:
         if self._closed_notified:

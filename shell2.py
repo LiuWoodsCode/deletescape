@@ -104,6 +104,7 @@ class Shell2Service(ServiceInterface):
         self._prune_dead_processes()
         result = []
         for app_id, state in sorted(self._running.items()):
+            self._refresh_launched_processes(state)
             desc = self.apps.get(app_id)
             item = dict(state)
             item["app_id"] = app_id
@@ -118,13 +119,40 @@ class Shell2Service(ServiceInterface):
     def _prune_dead_processes(self) -> None:
         for app_id, state in list(self._running.items()):
             proc = state.get("process")
+            if proc is None and state.get("state") == "external":
+                self._refresh_launched_processes(state)
+                if not state.get("child_pids"):
+                    self._mark_app_exited(app_id, int(state.get("exit_code") or 0), keep_external=False)
+                continue
             if proc is None:
                 continue
             if proc.returncode is None:
+                self._refresh_launched_processes(state)
                 continue
             self._mark_app_exited(app_id, int(proc.returncode or 0))
 
-    def _mark_app_exited(self, app_id: str, exit_code: int) -> None:
+    def _mark_app_exited(self, app_id: str, exit_code: int, *, keep_external: bool = True) -> None:
+        state = self._running.get(app_id)
+        if keep_external and state is not None:
+            self._refresh_launched_processes(state)
+            child_pids = [pid for pid in state.get("child_pids", []) if self._pid_alive(int(pid))]
+            if child_pids:
+                state.update(
+                    {
+                        "child_pids": child_pids,
+                        "exit_code": int(exit_code),
+                        "process": None,
+                        "state": "external",
+                        "visible": True,
+                    }
+                )
+                log.info(
+                    "Hosted app exited but launched processes remain",
+                    extra={"app_id": app_id, "exit_code": exit_code, "child_pids": child_pids},
+                )
+                self.RunningAppsChanged(_json(self._running_apps()))
+                return
+
         state = self._running.pop(app_id, None)
         self._background_enabled.pop(app_id, None)
         if self.active_app_id == app_id:
@@ -134,6 +162,73 @@ class Shell2Service(ServiceInterface):
             log.info("Hosted app exited", extra={"app_id": app_id, "exit_code": exit_code})
             self.AppExited(app_id, int(exit_code))
             self.RunningAppsChanged(_json(self._running_apps()))
+
+    def _refresh_launched_processes(self, state: dict[str, Any]) -> None:
+        root_pid = int(state.get("pid") or 0)
+        known = {int(pid) for pid in state.get("child_pids", []) if self._pid_alive(int(pid))}
+        launched_processes = []
+        for proc in state.get("launched_processes", []):
+            try:
+                pid = int(proc.get("pid") or 0)
+            except Exception:
+                continue
+            if not self._pid_alive(pid):
+                continue
+            launched_processes.append(proc)
+            known.add(pid)
+        if root_pid > 0 and self._pid_alive(root_pid):
+            known.update(self._descendant_pids(root_pid))
+            known.discard(root_pid)
+        state["launched_processes"] = launched_processes
+        state["child_pids"] = sorted(known)
+
+    def _descendant_pids(self, root_pid: int) -> set[int]:
+        tree = self._process_tree()
+        pids = {int(root_pid)}
+        pending = [int(root_pid)]
+        while pending:
+            parent = pending.pop()
+            for child in tree.get(parent, set()):
+                if child in pids:
+                    continue
+                pids.add(child)
+                pending.append(child)
+        return pids
+
+    def _process_tree(self) -> dict[int, set[int]]:
+        tree: dict[int, set[int]] = {}
+        try:
+            names = os.listdir("/proc")
+        except Exception:
+            return tree
+        for name in names:
+            if not name.isdigit():
+                continue
+            pid = int(name)
+            ppid = self._parent_pid(pid)
+            if ppid > 0:
+                tree.setdefault(ppid, set()).add(pid)
+        return tree
+
+    def _parent_pid(self, pid: int) -> int:
+        try:
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
+                stat = handle.read()
+        except Exception:
+            return 0
+        end = stat.rfind(")")
+        if end < 0:
+            return 0
+        fields = stat[end + 2 :].split()
+        if len(fields) < 2:
+            return 0
+        try:
+            return int(fields[1])
+        except ValueError:
+            return 0
+
+    def _pid_alive(self, pid: int) -> bool:
+        return pid > 0 and os.path.exists(f"/proc/{pid}")
 
     async def _watch_process(self, app_id: str, proc: asyncio.subprocess.Process) -> None:
         try:
@@ -265,6 +360,43 @@ class Shell2Service(ServiceInterface):
         if visible:
             self.active_app_id = app_id
             self.ActiveAppChanged(app_id)
+        self.RunningAppsChanged(_json(self._running_apps()))
+        return True
+
+    @method()
+    def RegisterLaunchedProcess(self, app_id: "s", pid: "u", metadata_json: "s") -> "b":
+        app_id = str(app_id or "").strip()
+        if app_id not in self.apps:
+            return False
+        pid = int(pid or 0)
+        if pid <= 0:
+            return False
+        try:
+            metadata = json.loads(metadata_json or "{}")
+        except Exception:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        state = self._running.setdefault(app_id, {})
+        processes = [item for item in state.get("launched_processes", []) if int(item.get("pid") or 0) != pid]
+        item = dict(metadata)
+        item["pid"] = pid
+        item["reported_at"] = time.time()
+        processes.append(item)
+        state["launched_processes"] = processes
+        child_pids = set()
+        for value in state.get("child_pids", []):
+            try:
+                child_pid = int(value)
+            except Exception:
+                continue
+            if child_pid > 0:
+                child_pids.add(child_pid)
+        child_pids.add(pid)
+        state["child_pids"] = sorted(child_pids)
+        state.setdefault("state", "running")
+        state.setdefault("visible", True)
+        log.info("App launched external process", extra={"app_id": app_id, "pid": pid, "metadata": metadata})
         self.RunningAppsChanged(_json(self._running_apps()))
         return True
 

@@ -535,12 +535,12 @@ def main():
 
     app = QApplication(sys.argv)
     _configure_default_app_font(base_dir=base_dir, app=app, log=log)
-    full_screen = bool(args.fullscreen or args.iron)
+    full_screen = bool(args.fullscreen)
     os_instance = Deletescape(show_lock_screen_on_start=False, full_screen=full_screen, embed=bool(args.kiosk), embedTV=bool(args.tv))
     os_instance.kangel_manager = kangel_manager
     kangel_manager.attach_host_window(os_instance)
     kangel_manager.set_recovery_info(None)
-    _show_boot_window(os_instance, full_screen=full_screen, frameless_fallback=bool(args.iron))
+    _show_boot_window(os_instance, full_screen=full_screen)
 
     splash_dir = base_dir / "splash"
 
@@ -577,16 +577,15 @@ def main():
 
     # Install our custom focus filter to show the in-app virtual keyboard.
     if not args.no_virtual_keyboard:
-        if not args.iron:
-            try:
-                from input_helper import install_focus_filter  # type: ignore
+        try:
+            from input_helper import install_focus_filter  # type: ignore
 
-                # Pass the OS root widget so the keyboard is added into the central
-                # content layout (never into QMainWindowLayout directly).
-                install_focus_filter(app, host_widget=os_instance.root)
-                log.info("Installed custom virtual keyboard focus filter")
-            except Exception:
-                log.exception("Failed to install custom virtual keyboard focus filter")
+            # Pass the OS root widget so the keyboard is added into the central
+            # content layout (never into QMainWindowLayout directly).
+            install_focus_filter(app, host_widget=os_instance.root)
+            log.info("Installed custom virtual keyboard focus filter")
+        except Exception:
+            log.exception("Failed to install custom virtual keyboard focus filter")
 
     # Run init checks in a background Qt thread so the UI can remain responsive
     # and we can show an animated throbber while the checks run.

@@ -254,8 +254,6 @@ class Shell2Service(ServiceInterface):
         if existing is not None:
             self.active_app_id = app_id
             self.ActiveAppChanged(app_id)
-            if self.mobile:
-                self.FocusAppRequested(app_id)
             return True
 
         args = [
@@ -340,7 +338,6 @@ class Shell2Service(ServiceInterface):
         if app_id not in self._running:
             return False
         self.active_app_id = app_id
-        self.FocusAppRequested(app_id)
         self.SetWindowState(app_id, "active", True)
         return True
 
@@ -613,10 +610,6 @@ class Shell2Service(ServiceInterface):
 
     @dbus_signal()
     def ActiveAppChanged(self, app_id: "s") -> "s":
-        return app_id
-
-    @dbus_signal()
-    def FocusAppRequested(self, app_id: "s") -> "s":
         return app_id
 
     @dbus_signal()

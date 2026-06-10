@@ -543,6 +543,9 @@ class Taskbar(Gtk.Window):
         self._box.pack_start(self._task_group, False, False, 0)
         self._box.pack_start(right_spacer, True, True, 0)
 
+        self.refresh()
+        GLib.timeout_add(100, self._refresh_tick)
+
     def _install_css(self) -> None:
         css = b"""
         window {
@@ -586,6 +589,620 @@ class Taskbar(Gtk.Window):
     def _on_destroy(self, *_args) -> None:
         self._shell.close()
         Gtk.main_quit()
+
+    def _refresh_tick(self) -> bool:
+        self.refresh()
+        return True
+
+    def refresh(self) -> None:
+        self._apps = self._fetch_apps()
+        self._running_apps = self._fetch_running_apps()
+        windows = self._fetch_windows()
+        windows.extend(self._wayland.windows())
+        windows = self._dedupe_windows(windows)
+        windows = self._attach_launched_windows(windows)
+        windows = self._merge_running_app_placeholders(windows)
+        if not windows:
+            windows = self._windows_from_running_apps(self._running_apps.values())
+        self._set_groups(self._group_windows(windows))
+
+    def _fetch_apps(self) -> dict[str, AppInfo]:
+        payload = self._shell.call("GetAllApps", default="[]")
+        apps: dict[str, AppInfo] = {}
+        for item in _decode_json(payload, []):
+            if not isinstance(item, dict):
+                continue
+            app_id = str(item.get("app_id") or "").strip()
+            if not app_id:
+                continue
+            apps[app_id] = AppInfo(
+                app_id=app_id,
+                display_name=str(item.get("display_name") or app_id),
+                icon_path=str(item.get("icon_path") or ""),
+            )
+        return apps
+
+    def _fetch_running_apps(self) -> dict[str, RunningAppInfo]:
+        payload = self._shell.call("GetRunningApps", default="[]")
+        raw_apps = _decode_json(payload, [])
+        if not isinstance(raw_apps, list):
+            return {}
+        apps: dict[str, RunningAppInfo] = {}
+        for item in raw_apps:
+            if not isinstance(item, dict):
+                continue
+            app_id = str(item.get("app_id") or "").strip()
+            if not app_id:
+                continue
+            apps[app_id] = RunningAppInfo(
+                app_id=app_id,
+                pid=int(item.get("pid") or 0),
+                child_pids=self._pid_tuple(item.get("child_pids", [])),
+                launched_processes=tuple(proc for proc in item.get("launched_processes", []) if isinstance(proc, dict)),
+                display_name=str(item.get("display_name") or app_id),
+                icon_path=str(item.get("icon_path") or ""),
+            )
+        return apps
+
+    def _pid_tuple(self, values) -> tuple[int, ...]:
+        pids = []
+        if not isinstance(values, list):
+            return ()
+        for value in values:
+            try:
+                pid = int(value)
+            except Exception:
+                continue
+            if pid > 0:
+                pids.append(pid)
+        return tuple(pids)
+
+    def _fetch_windows(self) -> list[WindowInfo]:
+        # Shell2 can back this with labwc/wlr-foreign-toplevel data.
+        payload = self._shell.call("GetWindows", default="")
+        raw_windows = _decode_json(payload, [])
+        if not isinstance(raw_windows, list):
+            return []
+        windows = []
+        for item in raw_windows:
+            if isinstance(item, dict):
+                windows.append(self._window_from_payload(item))
+        return windows
+
+    def _windows_from_running_apps(self, running_apps) -> list[WindowInfo]:
+        windows: list[WindowInfo] = []
+        for app in running_apps:
+            app_id = str(app.app_id or "").strip()
+            if not app_id:
+                continue
+            windows.append(
+                WindowInfo(
+                    key=f"app:{app_id}",
+                    title=str(app.display_name or app_id),
+                    app_id=app_id,
+                    pid=int(app.pid or 0),
+                    source="running-app",
+                )
+            )
+        return windows
+
+    def _window_from_payload(self, item: dict[str, Any]) -> WindowInfo:
+        app_id = str(item.get("app_id") or item.get("appId") or item.get("app-id") or "").strip()
+        title = str(item.get("title") or item.get("name") or item.get("display_name") or app_id or "Window")
+        window_id = str(item.get("window_id") or item.get("id") or item.get("handle") or "").strip()
+        pid = int(item.get("pid") or item.get("process_id") or 0)
+        key = window_id or f"{app_id}:{pid}:{title}"
+        return WindowInfo(
+            key=key,
+            title=title,
+            app_id=app_id,
+            pid=pid,
+            window_id=window_id,
+            active=bool(item.get("active", item.get("focused", False))),
+            visible=bool(item.get("visible", True)),
+            source=str(item.get("source") or "window"),
+            raw=item,
+        )
+
+    def _dedupe_windows(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        merged: dict[str, WindowInfo] = {}
+        for window in windows:
+            key = window.window_id or (f"pid:{window.pid}" if window.pid else window.key)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = window
+                continue
+            if not existing.pid and window.pid:
+                existing.pid = window.pid
+            if not existing.app_id and window.app_id:
+                existing.app_id = window.app_id
+            if existing.title == "Window" and window.title:
+                existing.title = window.title
+            existing.active = existing.active or window.active
+            existing.visible = existing.visible and window.visible
+            existing.raw.update(window.raw)
+        return list(merged.values())
+
+    def _merge_running_app_placeholders(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        represented_app_ids = {window.app_id for window in windows if window.app_id}
+        represented_pids = {window.pid for window in windows if window.pid > 0}
+        result = list(windows)
+
+        for app in self._running_apps.values():
+            if not app.app_id:
+                continue
+            if app.app_id in represented_app_ids:
+                continue
+            app_pids = {app.pid, *app.child_pids}
+            app_pids.discard(0)
+            if app_pids and represented_pids.intersection(app_pids):
+                continue
+            # result.extend(self._windows_from_running_apps([app]))
+        return result
+
+    def _attach_launched_windows(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        app_descendants = self._app_descendant_pids()
+
+        attached = []
+        for window in windows:
+            app_id = (
+                self._owning_app_id(window.pid, app_descendants)
+                or self._owning_app_id_by_window_identity(window)
+                or self._owning_app_id_by_app_metadata(window)
+            )
+            if app_id:
+                window.raw.setdefault("reported_app_id", window.app_id)
+                window.raw["launched_by_app_id"] = app_id
+                window.app_id = app_id
+            attached.append(window)
+        return attached
+
+    def _owning_app_id_by_window_identity(self, window: WindowInfo) -> str:
+        identity = self._normalized_window_identity(window)
+        if not identity:
+            return ""
+        for app_id, app in self._running_apps.items():
+            for proc in app.launched_processes:
+                match_names = proc.get("match_names", [])
+                if not isinstance(match_names, list):
+                    continue
+                for name in match_names:
+                    if self._normalize_name(name) and self._normalize_name(name) in identity:
+                        return app_id
+        return ""
+
+    def _owning_app_id_by_app_metadata(self, window: WindowInfo) -> str:
+        identity = self._normalized_window_identity(window)
+        if not identity:
+            return ""
+        for app_id, app in self._running_apps.items():
+            candidates = {
+                self._normalize_name(app_id),
+                self._normalize_name(app.display_name),
+            }
+            candidates.discard("")
+            if identity.intersection(candidates):
+                return app_id
+        return ""
+
+    def _normalized_window_identity(self, window: WindowInfo) -> set[str]:
+        values = {
+            window.app_id,
+            window.title,
+            window.raw.get("reported_app_id", ""),
+            window.raw.get("app_id", ""),
+            window.raw.get("appId", ""),
+        }
+        result = set()
+        for value in values:
+            normalized = self._normalize_name(value)
+            if normalized:
+                result.add(normalized)
+        return result
+
+    def _normalize_name(self, value: Any) -> str:
+        value = str(value or "").strip().lower()
+        if not value:
+            return ""
+        value = Path(value).name
+        if "." in value:
+            value = Path(value).stem
+        return re.sub(r"[^a-z0-9_-]+", "", value)
+
+    def _app_descendant_pids(self) -> dict[str, set[int]]:
+        process_tree = self._process_tree()
+        descendants: dict[str, set[int]] = {}
+        for app_id, app in self._running_apps.items():
+            if app.pid <= 0:
+                pids = set(app.child_pids)
+                if pids:
+                    descendants[app_id] = pids
+                continue
+            pids = {app.pid, *app.child_pids}
+            pending = [app.pid, *app.child_pids]
+            while pending:
+                parent = pending.pop()
+                children = process_tree.get(parent, set())
+                for child in children:
+                    if child in pids:
+                        continue
+                    pids.add(child)
+                    pending.append(child)
+            descendants[app_id] = pids
+        return descendants
+
+    def _process_tree(self) -> dict[int, set[int]]:
+        tree: dict[int, set[int]] = {}
+        try:
+            names = os.listdir("/proc")
+        except Exception:
+            return tree
+        for name in names:
+            if not name.isdigit():
+                continue
+            pid = int(name)
+            ppid = self._parent_pid(pid)
+            if ppid > 0:
+                tree.setdefault(ppid, set()).add(pid)
+        return tree
+
+    def _parent_pid(self, pid: int) -> int:
+        try:
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8") as handle:
+                stat = handle.read()
+        except Exception:
+            return 0
+        end = stat.rfind(")")
+        if end < 0:
+            return 0
+        fields = stat[end + 2 :].split()
+        if len(fields) < 2:
+            return 0
+        try:
+            return int(fields[1])
+        except ValueError:
+            return 0
+
+    def _owning_app_id(self, pid: int, app_descendants: dict[str, set[int]]) -> str:
+        if pid <= 0:
+            return ""
+        for app_id, pids in app_descendants.items():
+            if pid in pids:
+                return app_id
+        return ""
+
+    def _group_windows(self, windows: list[WindowInfo]) -> dict[str, list[WindowInfo]]:
+        groups: dict[str, list[WindowInfo]] = {}
+        for window in windows:
+            if not window.visible:
+                continue
+            groups.setdefault(window.group_key, []).append(window)
+        for group_windows in groups.values():
+            group_windows.sort(key=lambda window: (not self._wayland.can_manage_window(window.window_id), window.source == "running-app"))
+        return groups
+
+    def _set_groups(self, groups: dict[str, list[WindowInfo]]) -> None:
+        old_keys = set(self._buttons)
+        new_keys = set(groups)
+        for key in sorted(old_keys - new_keys):
+            button = self._buttons.pop(key)
+            self._task_box.remove(button)
+
+        for key in sorted(new_keys - old_keys):
+            button = Gtk.Button()
+            button.get_style_context().add_class("taskbar-button")
+            button.connect("clicked", self._on_button_clicked, key)
+            button.connect("button-press-event", self._on_button_press, key)
+            self._buttons[key] = button
+            self._task_box.pack_start(button, False, False, 0)
+
+        self._groups = groups
+        for key, button in self._buttons.items():
+            self._update_button(button, groups.get(key, []))
+        self.show_all()
+
+    def _update_button(self, button: Gtk.Button, windows: list[WindowInfo]) -> None:
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box.set_halign(Gtk.Align.CENTER)
+        box.set_valign(Gtk.Align.CENTER)
+        first = windows[0] if windows else None
+        icon = self._window_icon_image(first) if first is not None else None
+        if icon is not None:
+            box.pack_start(icon, False, False, 0)
+
+        current = button.get_child()
+        if current is not None:
+            button.remove(current)
+        button.add(box)
+        button.set_tooltip_text(self._group_tooltip(windows))
+
+        style = button.get_style_context()
+        if any(window.active for window in windows):
+            style.add_class("active")
+        else:
+            style.remove_class("active")
+
+    def _group_label(self, windows: list[WindowInfo]) -> str:
+        if not windows:
+            return ""
+        first = windows[0]
+        app = self._apps.get(first.app_id)
+        name = app.display_name if app else first.title
+        if len(windows) > 1:
+            return f"{name} ({len(windows)})"
+        return name or first.title
+
+    def _group_tooltip(self, windows: list[WindowInfo]) -> str:
+        label = self._group_label(windows)
+        titles = [window.title for window in windows if window.title and window.title != label]
+        if not titles:
+            return label
+        return "\n".join([label, *titles])
+
+    def _icon_image(self, icon_path: str) -> Gtk.Image | None:
+        if not icon_path:
+            return None
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                icon_path,
+                self.ICON_SIZE,
+                self.ICON_SIZE,
+                True,
+            )
+        except Exception:
+            return None
+        image = Gtk.Image.new_from_pixbuf(pixbuf)
+        image.set_size_request(self.ICON_SIZE, self.ICON_SIZE)
+        return image
+
+    def _window_icon_image(self, window: WindowInfo) -> Gtk.Image | None:
+        for icon_path in self._window_icon_paths(window):
+            icon = self._icon_image(icon_path)
+            if icon is not None:
+                return icon
+
+        for icon_name in self._window_icon_names(window):
+            icon = self._themed_icon_image(icon_name)
+            if icon is not None:
+                return icon
+
+        icon_kind, icon_value = self._desktop_icon_spec(window.app_id, window.title)
+        if icon_kind == "path":
+            icon = self._icon_image(icon_value)
+        elif icon_kind == "theme":
+            icon = self._themed_icon_image(icon_value)
+        else:
+            icon = None
+        if icon is not None:
+            return icon
+
+        return (
+            self._themed_icon_image("application-x-executable")
+            or self._themed_icon_image("application-default-icon")
+        )
+
+    def _window_icon_paths(self, window: WindowInfo) -> list[str]:
+        paths = []
+        if window.app_id in self._apps:
+            paths.append(self._apps[window.app_id].icon_path)
+        if window.app_id in self._running_apps:
+            paths.append(self._running_apps[window.app_id].icon_path)
+        for key in ("icon_path", "iconPath", "icon", "app_icon", "appIcon"):
+            value = str(window.raw.get(key) or "").strip()
+            if value and (value.startswith("/") or value.startswith("~")):
+                paths.append(os.path.expanduser(value))
+        return [path for path in paths if path]
+
+    def _window_icon_names(self, window: WindowInfo) -> list[str]:
+        names = []
+        for key in ("icon_name", "iconName", "icon", "app_icon_name", "appIconName"):
+            value = str(window.raw.get(key) or "").strip()
+            if value and not value.startswith("/") and not value.startswith("~"):
+                names.append(value)
+        return names
+
+    def _themed_icon_image(self, icon_name: str) -> Gtk.Image | None:
+        icon_name = str(icon_name or "").strip()
+        if not icon_name:
+            return None
+        theme = Gtk.IconTheme.get_default()
+        if theme is None:
+            return None
+        try:
+            pixbuf = theme.load_icon(icon_name, self.ICON_SIZE, Gtk.IconLookupFlags.FORCE_SIZE)
+        except Exception:
+            return None
+        image = Gtk.Image.new_from_pixbuf(pixbuf)
+        image.set_size_request(self.ICON_SIZE, self.ICON_SIZE)
+        return image
+
+    def _theme_has_icon(self, icon_name: str) -> bool:
+        theme = Gtk.IconTheme.get_default()
+        if theme is None:
+            return False
+        try:
+            return bool(theme.has_icon(icon_name))
+        except Exception:
+            return False
+
+    def _desktop_icon_spec(self, app_id: str, title: str = "") -> tuple[str, str]:
+        app_id = str(app_id or "").strip()
+        title = str(title or "").strip()
+        cache_key = (app_id, title)
+        if cache_key in self._desktop_icon_cache:
+            return self._desktop_icon_cache[cache_key]
+
+        desktop_app_info = getattr(Gio, "DesktopAppInfo", None)
+        for desktop_id in self._desktop_id_candidates(app_id):
+            try:
+                app_info = desktop_app_info.new(desktop_id) if desktop_app_info is not None else None
+            except Exception:
+                app_info = None
+            spec = self._icon_spec_from_gicon(app_info.get_icon() if app_info is not None else None)
+            if spec[0]:
+                self._desktop_icon_cache[cache_key] = spec
+                return spec
+
+        spec = self._desktop_file_icon_spec(app_id, title)
+        self._desktop_icon_cache[cache_key] = spec
+        return spec
+
+    def _desktop_id_candidates(self, app_id: str) -> list[str]:
+        values = []
+        app_id = str(app_id or "").strip()
+        if app_id:
+            values.extend([app_id, Path(app_id).name])
+            if not app_id.endswith(".desktop"):
+                values.extend([f"{app_id}.desktop", f"{Path(app_id).name}.desktop"])
+            normalized = self._normalize_name(app_id)
+            if normalized:
+                values.extend([normalized, f"{normalized}.desktop"])
+        result = []
+        seen = set()
+        for value in values:
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def _desktop_file_icon_spec(self, app_id: str, title: str) -> tuple[str, str]:
+        identity = {self._normalize_name(app_id), self._normalize_name(title)}
+        identity.discard("")
+        if not identity:
+            return ("", "")
+
+        for desktop_file in self._desktop_files():
+            try:
+                keyfile = GLib.KeyFile()
+                keyfile.load_from_file(str(desktop_file), GLib.KeyFileFlags.NONE)
+                icon = keyfile.get_string("Desktop Entry", "Icon")
+            except Exception:
+                continue
+            names = {self._normalize_name(desktop_file.stem)}
+            for key in ("StartupWMClass", "Name", "Exec"):
+                try:
+                    names.add(self._normalize_name(keyfile.get_string("Desktop Entry", key)))
+                except Exception:
+                    pass
+            names.discard("")
+            if identity.intersection(names):
+                if icon.startswith("/") or icon.startswith("~"):
+                    return ("path", os.path.expanduser(icon))
+                return ("theme", icon)
+        return ("", "")
+
+    def _desktop_files(self) -> list[Path]:
+        data_dirs = [Path.home() / ".local/share"]
+        for value in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"):
+            if value:
+                data_dirs.append(Path(value))
+
+        files = []
+        for data_dir in data_dirs:
+            applications = data_dir / "applications"
+            try:
+                files.extend(applications.rglob("*.desktop"))
+            except Exception:
+                continue
+        return files
+
+    def _icon_spec_from_gicon(self, icon) -> tuple[str, str]:
+        if icon is None:
+            return ("", "")
+        try:
+            if isinstance(icon, Gio.FileIcon):
+                path = icon.get_file().get_path()
+                return ("path", str(path or ""))
+            if isinstance(icon, Gio.ThemedIcon):
+                for name in icon.get_names():
+                    if self._theme_has_icon(name):
+                        return ("theme", str(name))
+        except Exception:
+            return ("", "")
+        return ("", "")
+
+    def _on_button_clicked(self, _button: Gtk.Button, group_key: str) -> None:
+        windows = self._groups.get(group_key, [])
+        if len(windows) == 1:
+            self._activate_window(windows[0])
+            return
+
+        self._show_window_menu(windows)
+
+    def _on_button_press(self, _button: Gtk.Button, event, group_key: str) -> bool:
+        if event.button != Gdk.BUTTON_SECONDARY:
+            return False
+        windows = self._groups.get(group_key, [])
+        self._show_window_menu(windows, management=True)
+        return True
+
+    def _show_window_menu(self, windows: list[WindowInfo], *, management: bool = False) -> None:
+        menu = Gtk.Menu()
+        if management:
+            windows = self._manageable_menu_windows(windows)
+        for window in windows:
+            if management:
+                self._append_management_menu(menu, window)
+            else:
+                item = Gtk.MenuItem(label=window.title)
+                item.connect("activate", self._on_menu_item_activate, window)
+                menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(None)
+
+    def _manageable_menu_windows(self, windows: list[WindowInfo]) -> list[WindowInfo]:
+        manageable = [window for window in windows if self._wayland.can_manage_window(window.window_id)]
+        if manageable:
+            return manageable
+        return [window for window in windows if window.source != "running-app"] or list(windows[:1])
+
+    def _append_management_menu(self, menu: Gtk.Menu, window: WindowInfo) -> None:
+        title = Gtk.MenuItem(label=window.title)
+        title.connect("activate", self._on_menu_item_activate, window)
+        menu.append(title)
+        for label, action in (
+            ("Activate", "activate"),
+            ("Minimize", "minimize"),
+            ("Restore", "restore"),
+            ("Maximize", "maximize"),
+            ("Unmaximize", "unmaximize"),
+            ("Close", "close"),
+        ):
+            can_manage = self._wayland.can_manage_window(window.window_id, action)
+            if action != "activate" and not can_manage:
+                continue
+            item = Gtk.MenuItem(label=f"  {label}")
+            item.connect("activate", self._on_manage_menu_item_activate, window, action)
+            menu.append(item)
+        menu.append(Gtk.SeparatorMenuItem())
+
+    def _on_menu_item_activate(self, _item: Gtk.MenuItem, window: WindowInfo) -> None:
+        self._activate_window(window)
+
+    def _on_manage_menu_item_activate(self, _item: Gtk.MenuItem, window: WindowInfo, action: str) -> None:
+        if action == "activate":
+            self._activate_window(window)
+            return
+        self._manage_window(window, action)
+
+    def _activate_window(self, window: WindowInfo) -> None:
+        if self._manage_window(window, "activate"):
+            return
+        if window.window_id:
+            self._shell.fire_and_forget("ActivateWindow", window.window_id)
+            return
+        if window.app_id:
+            self._shell.fire_and_forget("ActivateApp", window.app_id)
+
+    def _manage_window(self, window: WindowInfo, action: str) -> bool:
+        if window.window_id and self._wayland.manage_window(window.window_id, action):
+            return True
+        if window.window_id:
+            self._shell.fire_and_forget("ManageWindow", window.window_id, action)
+            return True
+        return False
+
 
 def main() -> int:
     Taskbar().show_all()

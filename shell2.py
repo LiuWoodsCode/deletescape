@@ -76,10 +76,11 @@ def _descriptor_dict(app: AppDescriptor) -> dict[str, Any]:
 
 
 class Shell2Service(ServiceInterface):
-    def __init__(self, *, base_dir: Path):
+    def __init__(self, *, base_dir: Path, mobile: bool = False):
         super().__init__(INTERFACE_NAME)
         self.base_dir = base_dir
         self.host_shell = base_dir / "host_shell.py"
+        self.mobile = bool(mobile)
         self._config_store = ConfigStore()
         self.config: OSConfig = self._config_store.load()
         self.device = DeviceConfigStore().load()
@@ -253,6 +254,8 @@ class Shell2Service(ServiceInterface):
         if existing is not None:
             self.active_app_id = app_id
             self.ActiveAppChanged(app_id)
+            if self.mobile:
+                self.FocusAppRequested(app_id)
             return True
 
         args = [
@@ -268,6 +271,8 @@ class Shell2Service(ServiceInterface):
         ]
         if not show_window:
             args.append("--hidden")
+        if self.mobile:
+            args.append("--mobileshell")
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -335,6 +340,7 @@ class Shell2Service(ServiceInterface):
         if app_id not in self._running:
             return False
         self.active_app_id = app_id
+        self.FocusAppRequested(app_id)
         self.SetWindowState(app_id, "active", True)
         return True
 
@@ -610,6 +616,10 @@ class Shell2Service(ServiceInterface):
         return app_id
 
     @dbus_signal()
+    def FocusAppRequested(self, app_id: "s") -> "s":
+        return app_id
+
+    @dbus_signal()
     def AppLaunched(self, app_id: "s", pid: "u") -> "su":
         return [app_id, pid]
 
@@ -646,11 +656,16 @@ class Shell2Service(ServiceInterface):
 async def _amain() -> None:
     parser = argparse.ArgumentParser(description="Headless deletescape shell service")
     parser.add_argument("--no-autostart", action="store_true", help="Do not start apps marked autostart")
+    parser.add_argument(
+        "--mobile",
+        action="store_true",
+        help="Launch hosted app windows in mobile shell mode",
+    )
     args = parser.parse_args()
 
     configure_logging()
     base_dir = Path(__file__).resolve().parent
-    service = Shell2Service(base_dir=base_dir)
+    service = Shell2Service(base_dir=base_dir, mobile=bool(args.mobile))
     bus = await MessageBus().connect()
     await bus.request_name(BUS_NAME)
     bus.export(OBJECT_PATH, service)

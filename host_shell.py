@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from dbus_next.aio import MessageBus
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QPalette, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QWidget
 
@@ -260,11 +260,29 @@ class ShellDBusClient:
             return
         asyncio.run_coroutine_threadsafe(self._call_async(method_name, *args), self._loop)
 
+    def on_focus_app_requested(self, callback) -> None:
+        def register() -> None:
+            if self._iface is None:
+                return
+            try:
+                self._iface.on_focus_app_requested(callback)
+            except Exception:
+                log.exception("Failed to subscribe to focus requests")
+
+        try:
+            self._loop.call_soon_threadsafe(register)
+        except Exception:
+            pass
+
     def close(self) -> None:
         try:
             self._loop.call_soon_threadsafe(self._loop.stop)
         except Exception:
             pass
+
+
+class FocusRequestBridge(QObject):
+    requested = Signal(str)
 
 
 class HostedAppWindow(QMainWindow):
@@ -289,6 +307,8 @@ class HostedAppWindow(QMainWindow):
         self._mobile_shell = bool(mobile_shell)
         self._app_instance = None
         self._closed_notified = False
+        self._focus_bridge = FocusRequestBridge()
+        self._focus_bridge.requested.connect(self._handle_focus_app_requested)
         self._patch_subprocess_tracking()
 
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -308,6 +328,7 @@ class HostedAppWindow(QMainWindow):
 
         self._load_app(container)
         self.apply_theme()
+        self._shell.on_focus_app_requested(self._focus_bridge.requested.emit)
         self._register_host()
 
         if not self._hidden:
@@ -317,6 +338,25 @@ class HostedAppWindow(QMainWindow):
                 self.show()
             self.raise_()
             self.activateWindow()
+
+    @Slot(str)
+    def _handle_focus_app_requested(self, app_id: str) -> None:
+        if str(app_id or "").strip() != self.app_id:
+            return
+        self._hidden = False
+        app = QApplication.instance()
+        if app is not None:
+            app.setQuitOnLastWindowClosed(True)
+        if self.isMinimized():
+            self.showNormal()
+        if self._mobile_shell:
+            self.showMaximized()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        self.container.setFocus(Qt.ActiveWindowFocusReason)
+        self._shell.fire_and_forget("SetWindowState", self.app_id, "active", True)
 
     def _display_name(self) -> str:
         desc = self.apps.get(self.app_id)

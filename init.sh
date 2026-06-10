@@ -1,10 +1,18 @@
 #!/bin/bash
 
-python3 shell2.py &
-PID1=$!
+if [ "$1" = "mobile" ]; then
+    python3 shell2.py --mobile &
+    PID1=$!
 
-python3 labwc/desktop/taskbar.py &
-PID2=$!
+    python3 labwc/mobile/status.py &
+    PID2=$!
+else
+    python3 shell2.py &
+    PID1=$!
+
+    python3 labwc/desktop/taskbar.py &
+    PID2=$!
+fi
 
 cleanup() {
     echo "Stopping processes..."

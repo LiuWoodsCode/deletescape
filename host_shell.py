@@ -155,12 +155,6 @@ def _desktop_entry_value(value: Any) -> str:
     return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")
 
 
-def _desktop_exec_arg(value: Any) -> str:
-    text = str(value or "")
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$")
-    return f'"{escaped}"'
-
-
 def _ensure_desktop_entry(desc: AppDescriptor, *, host_shell: Path) -> str | None:
     if desc is None or not desc.icon_path:
         return None
@@ -172,12 +166,17 @@ def _ensure_desktop_entry(desc: AppDescriptor, *, host_shell: Path) -> str | Non
     except Exception:
         return None
 
+    import random
+    import string
+
+    andom_string = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+
     desktop_id = _desktop_file_id(desc)
     data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     applications_dir = data_home / "applications"
-    desktop_path = applications_dir / f"{desktop_id}.desktop"
+    desktop_path = applications_dir / f"{andom_string}{desktop_id}.desktop"
     exec_line = " ".join(
-        _desktop_exec_arg(part)
+        shlex.quote(part)
         for part in (
             sys.executable,
             str(host_shell),

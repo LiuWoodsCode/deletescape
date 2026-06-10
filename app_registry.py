@@ -32,6 +32,7 @@ class AppDescriptor:
     module_name: str
     sys_path_entry: str
     app_class: type | None = None
+    lock_host_window: bool = False
 
 
 def _safe_module_name(app_id: str) -> str:
@@ -209,7 +210,7 @@ def unload_app_modules(descriptor: AppDescriptor) -> int:
     return removed
 
 
-def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
+def discover_apps(apps_root: Path, *, allow_lock_host_window: bool = False) -> dict[str, AppDescriptor]:
     result: dict[str, AppDescriptor] = {}
 
     if not apps_root.exists() or not apps_root.is_dir():
@@ -272,12 +273,23 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
 
         launch_cfg = manifest.get("launch")
         receive_custom_qss = False
+        lock_host_window = False
         if isinstance(launch_cfg, dict):
             # Support both the requested legacy key and the corrected spelling.
             receive_custom_qss = _coerce_bool(
                 launch_cfg.get("recieveCustomQSS", launch_cfg.get("")),
                 default=False,
             )
+            lock_host_window = _coerce_bool(launch_cfg.get("lockHostWindow"), default=False)
+
+        host_window_cfg = manifest.get("hostWindow")
+        if isinstance(host_window_cfg, dict):
+            lock_host_window = _coerce_bool(
+                host_window_cfg.get("locked", host_window_cfg.get("lockHostWindow")),
+                default=lock_host_window,
+            )
+        if not allow_lock_host_window:
+            lock_host_window = False
 
         if not _has_app_class(main_py):
             log.warning(
@@ -302,6 +314,7 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
             hidden=hidden,
             autostart=autostart,
             receive_custom_qss=receive_custom_qss,
+            lock_host_window=lock_host_window,
             module_name=module_name,
             sys_path_entry=sys_path_entry,
             app_class=None,
@@ -323,6 +336,7 @@ def discover_apps(apps_root: Path) -> dict[str, AppDescriptor]:
                 "hidden": hidden,
                 "autostart": autostart,
                 "receive_custom_qss": receive_custom_qss,
+                "lock_host_window": lock_host_window,
                 "permissions": permissions,
             },
         )

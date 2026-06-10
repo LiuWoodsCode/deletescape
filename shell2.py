@@ -72,6 +72,7 @@ def _descriptor_dict(app: AppDescriptor) -> dict[str, Any]:
         "hidden": bool(app.hidden),
         "autostart": bool(app.autostart),
         "receive_custom_qss": bool(app.receive_custom_qss),
+        "lock_host_window": bool(app.lock_host_window),
     }
 
 
@@ -94,7 +95,7 @@ class Shell2Service(ServiceInterface):
         builtin_apps_root = self.base_dir / "apps"
         user_apps_root = get_user_data_layout(self.base_dir).applications
         user_apps = discover_apps(user_apps_root)
-        builtins = discover_apps(builtin_apps_root)
+        builtins = discover_apps(builtin_apps_root, allow_lock_host_window=True)
         merged = dict(user_apps)
         merged.update(builtins)
         return merged

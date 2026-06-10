@@ -5,5 +5,8 @@
   "build": 1,
   "version": "0.1.0",
   "permissions": [],
-  "hidden": true
+  "hidden": true,
+  "launch": {
+    "lockHostWindow": true
+  }
 }

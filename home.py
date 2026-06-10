@@ -1626,7 +1626,7 @@ class Deletescape(QMainWindow):
             extra={"builtin_apps_root": str(builtin_apps_root), "user_apps_root": str(user_apps_root)},
         )
 
-        builtins = discover_apps(builtin_apps_root)
+        builtins = discover_apps(builtin_apps_root, allow_lock_host_window=True)
         user_apps = discover_apps(user_apps_root)
 
         duplicates = set(builtins.keys()) & set(user_apps.keys())

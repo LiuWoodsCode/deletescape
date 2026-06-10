@@ -19,7 +19,7 @@ from typing import Any
 from dbus_next.aio import MessageBus
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor, QPalette, QIcon
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from app_registry import AppDescriptor, discover_apps, load_app_class
 from config import ConfigStore, DeviceConfigStore, OSConfig
@@ -50,6 +50,7 @@ class RemoteAppDescriptor:
     hidden: bool = False
     autostart: bool = False
     receive_custom_qss: bool = False
+    lock_host_window: bool = False
 
 
 def _camel_to_snake(name: str) -> str:
@@ -95,6 +96,7 @@ def _remote_apps(payload: str) -> list[RemoteAppDescriptor]:
                     hidden=bool(item.get("hidden", False)),
                     autostart=bool(item.get("autostart", False)),
                     receive_custom_qss=bool(item.get("receive_custom_qss", False)),
+                    lock_host_window=bool(item.get("lock_host_window", False)),
                 )
             )
         except Exception:
@@ -289,25 +291,45 @@ class HostedAppWindow(QMainWindow):
         self._mobile_shell = bool(mobile_shell)
         self._app_instance = None
         self._closed_notified = False
+        self._lock_host_window = bool(getattr(self.apps.get(self.app_id), "lock_host_window", False))
+        self._locked_geometry = None
+        self._restoring_locked_window = False
         self._patch_subprocess_tracking()
 
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         window_flags = Qt.Window
-        if self._mobile_shell:
+        if self._mobile_shell or self._lock_host_window:
             window_flags |= Qt.FramelessWindowHint
         self.setWindowFlags(window_flags)
         self.setWindowTitle(self._display_name())
         self.resize(900, 600)
+        if self._lock_host_window and not self._mobile_shell:
+            self.setFixedSize(self.size())
 
         self._apply_app_icon()
 
-        container = QWidget()
-        container.setFocusPolicy(Qt.StrongFocus)
-        self.setCentralWidget(container)
+        if self._lock_host_window:
+            host_frame = QFrame()
+            host_frame.setObjectName("LockedHostFrame")
+            host_layout = QVBoxLayout(host_frame)
+            host_layout.setContentsMargins(1, 1, 1, 1)
+            host_layout.setSpacing(0)
+            
+            container = QWidget()
+            container.setObjectName("LockedHostContent")
+            container.setFocusPolicy(Qt.StrongFocus)
+            host_layout.addWidget(container, 1)
+            self.setCentralWidget(host_frame)
+        else:
+            container = QWidget()
+            container.setFocusPolicy(Qt.StrongFocus)
+            self.setCentralWidget(container)
         self.container = container
 
         self._load_app(container)
         self.apply_theme()
+        if self._lock_host_window:
+            self._apply_locked_host_style()
         self._register_host()
 
         if not self._hidden:
@@ -315,6 +337,10 @@ class HostedAppWindow(QMainWindow):
                 self.showMaximized()
             else:
                 self.show()
+            if self._lock_host_window and self._mobile_shell:
+                self.setFixedSize(self.size())
+            if self._lock_host_window:
+                QTimer.singleShot(0, self._capture_locked_geometry)
             self.raise_()
             self.activateWindow()
 
@@ -335,6 +361,38 @@ class HostedAppWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setWindowIcon(icon)
+
+    def _apply_locked_host_style(self) -> None:
+        if getattr(self.config, "dark_mode", True):
+            frame = "#3A3A3A"
+            title_bg = "#202020"
+            title_fg = "#F4F4F4"
+            content_bg = "#101010"
+        else:
+            frame = "#A8A8A8"
+            title_bg = "#EAEAEA"
+            title_fg = "#151515"
+            content_bg = "#FFFFFF"
+
+        self.setStyleSheet(
+            f"""
+            QFrame#LockedHostFrame {{
+                background: {frame};
+                border: 1px solid {frame};
+            }}
+            QLabel#LockedHostTitle {{
+                background: {title_bg};
+                color: {title_fg};
+                font-size: 13px;
+                font-weight: 600;
+                padding-left: 12px;
+            }}
+            QWidget#LockedHostContent {{
+                background: {content_bg};
+                border-top: 1px solid {frame};
+            }}
+            """
+        )
 
     def _load_config(self) -> OSConfig:
         remote = self._shell.call("GetConfig", default="")
@@ -396,10 +454,19 @@ class HostedAppWindow(QMainWindow):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
+        if self._lock_host_window and event.type() == QEvent.WindowStateChange and (self.isMinimized() or self.isMaximized()):
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized & ~Qt.WindowMaximized | Qt.WindowActive)
+            QTimer.singleShot(0, self._restore_locked_window)
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._shell.fire_and_forget("SetWindowState", self.app_id, "active", self.isVisible())
 
     def closeEvent(self, event) -> None:
+        if self._lock_host_window:
+            event.ignore()
+            self.raise_()
+            self.activateWindow()
+            return
+
         try:
             hook = getattr(self._app_instance, "on_quit", None)
             if callable(hook):
@@ -408,6 +475,36 @@ class HostedAppWindow(QMainWindow):
             log.exception("App on_quit hook failed", extra={"app_id": self.app_id})
         self._notify_closed(0)
         super().closeEvent(event)
+
+    def moveEvent(self, event) -> None:
+        super().moveEvent(event)
+        if self._lock_host_window and self._locked_geometry is not None and not self._restoring_locked_window:
+            if self.geometry().topLeft() != self._locked_geometry.topLeft():
+                QTimer.singleShot(0, self._restore_locked_window)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._lock_host_window and self._locked_geometry is not None and not self._restoring_locked_window:
+            if self.geometry().size() != self._locked_geometry.size():
+                QTimer.singleShot(0, self._restore_locked_window)
+
+    def _capture_locked_geometry(self) -> None:
+        self._locked_geometry = self.geometry()
+        self.setFixedSize(self._locked_geometry.size())
+
+    def _restore_locked_window(self) -> None:
+        self._restoring_locked_window = True
+        try:
+            self.setWindowState(self.windowState() & ~Qt.WindowMinimized & ~Qt.WindowMaximized | Qt.WindowActive)
+            self.showNormal()
+            if self._locked_geometry is not None:
+                self.setGeometry(self._locked_geometry)
+            elif self._mobile_shell:
+                self.showMaximized()
+            self.raise_()
+            self.activateWindow()
+        finally:
+            self._restoring_locked_window = False
 
     def format_time(self, dt: datetime) -> str:
         if getattr(self.config, "use_24h_time", True):
@@ -491,6 +588,7 @@ class HostedAppWindow(QMainWindow):
                 hidden=app.hidden,
                 autostart=app.autostart,
                 receive_custom_qss=app.receive_custom_qss,
+                lock_host_window=app.lock_host_window,
             )
             for app in self.apps.values()
             if not app.hidden
@@ -514,6 +612,7 @@ class HostedAppWindow(QMainWindow):
                 hidden=app.hidden,
                 autostart=app.autostart,
                 receive_custom_qss=app.receive_custom_qss,
+                lock_host_window=app.lock_host_window,
             )
             for app in self.apps.values()
         ]
@@ -660,7 +759,7 @@ def _load_apps(base_dir: Path) -> dict[str, AppDescriptor]:
     builtin_apps_root = base_dir / "apps"
     user_apps_root = get_user_data_layout(base_dir).applications
     user_apps = discover_apps(user_apps_root)
-    builtins = discover_apps(builtin_apps_root)
+    builtins = discover_apps(builtin_apps_root, allow_lock_host_window=True)
     merged = dict(user_apps)
     merged.update(builtins)
     return merged

@@ -123,6 +123,91 @@ def _command_metadata(args: Any) -> dict[str, Any]:
     }
 
 
+def _icon_for_descriptor(desc: AppDescriptor | None) -> QIcon | None:
+    if desc is None:
+        return None
+
+    candidates: list[Path] = []
+    if desc.icon_path:
+        candidates.append(Path(desc.icon_path))
+    if desc.folder:
+        candidates.append(Path(desc.folder) / "Assets" / "icon.png")
+
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                icon = QIcon(str(candidate))
+                if not icon.isNull():
+                    return icon
+        except Exception:
+            continue
+    return None
+
+
+def _desktop_file_id(desc: AppDescriptor) -> str:
+    raw = desc.bundle_id or f"org.deletescapeos.{desc.app_id}"
+    desktop_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(raw).strip())
+    return desktop_id.strip(".-") or str(desc.app_id)
+
+
+def _desktop_entry_value(value: Any) -> str:
+    text = str(value or "")
+    return text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")
+
+
+def _desktop_exec_arg(value: Any) -> str:
+    text = str(value or "")
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$")
+    return f'"{escaped}"'
+
+
+def _ensure_desktop_entry(desc: AppDescriptor, *, host_shell: Path) -> str | None:
+    if desc is None or not desc.icon_path:
+        return None
+
+    icon_path = Path(desc.icon_path)
+    try:
+        if not icon_path.exists():
+            return None
+    except Exception:
+        return None
+
+    desktop_id = _desktop_file_id(desc)
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+    applications_dir = data_home / "applications"
+    desktop_path = applications_dir / f"{desktop_id}.desktop"
+    exec_line = " ".join(
+        _desktop_exec_arg(part)
+        for part in (
+            sys.executable,
+            str(host_shell),
+            desc.app_id,
+        )
+    )
+    content = "\n".join(
+        [
+            "[Desktop Entry]",
+            "Type=Application",
+            f"Name={_desktop_entry_value(desc.display_name or desc.app_id)}",
+            f"Exec={exec_line}",
+            f"Icon={_desktop_entry_value(icon_path)}",
+            "Terminal=false",
+            "NoDisplay=true",
+            f"StartupWMClass={_desktop_entry_value(desktop_id)}",
+            "",
+        ]
+    )
+
+    try:
+        applications_dir.mkdir(parents=True, exist_ok=True)
+        if not desktop_path.exists() or desktop_path.read_text(encoding="utf-8") != content:
+            desktop_path.write_text(content, encoding="utf-8")
+    except Exception:
+        log.exception("Failed to write hosted app desktop entry", extra={"app_id": desc.app_id})
+        return None
+    return desktop_id
+
+
 class ShellDBusClient:
     def __init__(self, *, bus_name: str, object_path: str, interface_name: str):
         self.bus_name = bus_name
@@ -210,12 +295,7 @@ class HostedAppWindow(QMainWindow):
         self.setWindowTitle(self._display_name())
         self.resize(900, 600)
 
-        desc = self.apps.get(self.app_id)
-        try:
-            if desc and desc.icon_path:
-                self.setWindowIcon(QIcon(str(desc.icon_path)))
-        except Exception:
-            pass
+        self._apply_app_icon()
 
         container = QWidget()
         container.setFocusPolicy(Qt.StrongFocus)
@@ -236,6 +316,18 @@ class HostedAppWindow(QMainWindow):
         if desc is None:
             return self.app_id
         return desc.display_name or self.app_id
+
+    def _app_icon(self) -> QIcon | None:
+        return _icon_for_descriptor(self.apps.get(self.app_id))
+
+    def _apply_app_icon(self) -> None:
+        icon = self._app_icon()
+        if icon is None:
+            return
+        self.setWindowIcon(icon)
+        app = QApplication.instance()
+        if app is not None:
+            app.setWindowIcon(icon)
 
     def _load_config(self) -> OSConfig:
         remote = self._shell.call("GetConfig", default="")
@@ -577,8 +669,21 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging()
+    base_dir = Path(__file__).resolve().parent
+    apps = _load_apps(base_dir)
+
+    desc = apps.get(args.app_id)
+    if desc is not None:
+        desktop_id = _ensure_desktop_entry(desc, host_shell=base_dir / "host_shell.py")
+        # Set this before QApplication is constructed so Wayland/X11 identify
+        # the hosted window as the app instead of as the Python interpreter.
+        QApplication.setDesktopFileName(desktop_id or desc.app_id)
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(not bool(args.hidden))
+    if desc is not None:
+        app.setApplicationName(desc.display_name or desc.app_id)
+        app.setApplicationDisplayName(desc.display_name or desc.app_id)
 
     shell_client = ShellDBusClient(
         bus_name=args.shell_bus_name,
@@ -586,11 +691,13 @@ def main() -> None:
         interface_name=args.shell_interface,
     )
 
-    base_dir = Path(__file__).resolve().parent
-    apps = _load_apps(base_dir)
     if args.app_id not in apps:
         QMessageBox.critical(None, "Unknown App", f"No app with id '{args.app_id}'")
         sys.exit(2)
+
+    icon = _icon_for_descriptor(desc)
+    if icon is not None:
+        app.setWindowIcon(icon)
 
     try:
         window = HostedAppWindow(

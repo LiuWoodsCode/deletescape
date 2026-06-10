@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from dbus_next import Variant
 from dbus_next.aio import MessageBus
 from dbus_next.service import ServiceInterface, method, signal as dbus_signal
 
@@ -36,6 +37,9 @@ from wifi import (
 BUS_NAME = "org.deletescapeos.Shell2"
 OBJECT_PATH = "/org/deletescapeos/Shell2"
 INTERFACE_NAME = "org.deletescapeos.Shell2"
+FREEDESKTOP_NOTIFICATIONS_BUS_NAME = "org.freedesktop.Notifications"
+FREEDESKTOP_NOTIFICATIONS_OBJECT_PATH = "/org/freedesktop/Notifications"
+FREEDESKTOP_NOTIFICATIONS_INTERFACE = "org.freedesktop.Notifications"
 
 log = get_logger("shell2")
 
@@ -437,6 +441,52 @@ class Shell2Service(ServiceInterface):
         self.ConfigChanged(_json(self.config))
         return True
 
+    def _notification_app_name(self, app_id: str) -> str:
+        app_id = str(app_id or "").strip()
+        app = self.apps.get(app_id)
+        if app is not None:
+            return str(app.display_name or app.app_id or app_id)
+        return app_id or "deletescape"
+
+    def _notification_app_icon(self, app_id: str) -> str:
+        app_id = str(app_id or "").strip()
+        app = self.apps.get(app_id)
+        if app is not None and app.icon_path:
+            return str(app.icon_path)
+        return ""
+
+    async def _send_freedesktop_notification(self, payload: dict[str, Any]) -> None:
+        app_id = str(payload.get("app_id") or "").strip()
+        app_name = self._notification_app_name(app_id)
+        app_icon = self._notification_app_icon(app_id)
+        hints: dict[str, Variant] = {"desktop-entry": Variant("s", app_id)} if app_id else {}
+        expire_timeout = max(-1, int(payload.get("duration_ms") or -1))
+
+        try:
+            bus = await MessageBus().connect()
+            introspection = await bus.introspect(
+                FREEDESKTOP_NOTIFICATIONS_BUS_NAME,
+                FREEDESKTOP_NOTIFICATIONS_OBJECT_PATH,
+            )
+            proxy = bus.get_proxy_object(
+                FREEDESKTOP_NOTIFICATIONS_BUS_NAME,
+                FREEDESKTOP_NOTIFICATIONS_OBJECT_PATH,
+                introspection,
+            )
+            notifications = proxy.get_interface(FREEDESKTOP_NOTIFICATIONS_INTERFACE)
+            await notifications.call_notify(
+                app_name,
+                0,
+                app_icon,
+                str(payload.get("title") or ""),
+                str(payload.get("message") or ""),
+                [],
+                hints,
+                expire_timeout,
+            )
+        except Exception:
+            log.exception("Failed to send freedesktop notification", extra={"app_id": app_id})
+
     @method()
     def Notify(self, title: "s", message: "s", duration_ms: "u", app_id: "s") -> "b":
         payload = {
@@ -448,6 +498,10 @@ class Shell2Service(ServiceInterface):
         }
         log.info("Notification requested", extra={"app_id": payload["app_id"], "title": payload["title"]})
         self.NotificationRequested(_json(payload))
+        try:
+            asyncio.create_task(self._send_freedesktop_notification(payload))
+        except RuntimeError:
+            log.exception("Failed to schedule freedesktop notification", extra={"app_id": payload["app_id"]})
         return True
 
     @method()

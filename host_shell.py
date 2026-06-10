@@ -273,6 +273,7 @@ class HostedAppWindow(QMainWindow):
         *,
         app_id: str,
         hidden: bool,
+        mobile_shell: bool,
         shell_client: ShellDBusClient,
         local_apps: dict[str, AppDescriptor],
     ):
@@ -285,12 +286,16 @@ class HostedAppWindow(QMainWindow):
         self._config_store = ConfigStore()
         self.config: OSConfig = self._load_config()
         self.device = DeviceConfigStore().load()
+        self._mobile_shell = bool(mobile_shell)
         self._app_instance = None
         self._closed_notified = False
         self._patch_subprocess_tracking()
 
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setWindowFlags(Qt.Window)
+        window_flags = Qt.Window
+        if self._mobile_shell:
+            window_flags |= Qt.FramelessWindowHint
+        self.setWindowFlags(window_flags)
         self.setWindowTitle(self._display_name())
         self.resize(900, 600)
 
@@ -306,7 +311,10 @@ class HostedAppWindow(QMainWindow):
         self._register_host()
 
         if not self._hidden:
-            self.show()
+            if self._mobile_shell:
+                self.showMaximized()
+            else:
+                self.show()
             self.raise_()
             self.activateWindow()
 
@@ -662,6 +670,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Host one deletescape app in its own process")
     parser.add_argument("app_id", help="Application id to host")
     parser.add_argument("--hidden", action="store_true", help="Instantiate the app without showing a window")
+    parser.add_argument(
+        "--mobileshell",
+        action="store_true",
+        help="Launch maximized without window decorations",
+    )
     parser.add_argument("--shell-bus-name", default=DEFAULT_BUS_NAME)
     parser.add_argument("--shell-object-path", default=DEFAULT_OBJECT_PATH)
     parser.add_argument("--shell-interface", default=DEFAULT_INTERFACE)
@@ -702,6 +715,7 @@ def main() -> None:
         window = HostedAppWindow(
             app_id=args.app_id,
             hidden=bool(args.hidden),
+            mobile_shell=bool(args.mobileshell),
             shell_client=shell_client,
             local_apps=apps,
         )

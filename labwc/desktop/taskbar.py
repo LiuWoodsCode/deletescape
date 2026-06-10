@@ -508,6 +508,7 @@ class Taskbar(Gtk.Window):
         self.set_resizable(False)
         self.set_default_size(1, self.HEIGHT)
         self.connect("destroy", self._on_destroy)
+        self.connect("realize", self._on_realize)
 
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.TOP)
@@ -523,13 +524,8 @@ class Taskbar(Gtk.Window):
         self._box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.add(self._box)
 
-        left_spacer = Gtk.Box()
-        right_spacer = Gtk.Box()
-        left_spacer.set_hexpand(True)
-        right_spacer.set_hexpand(True)
-
         self._task_group = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self._task_group.set_halign(Gtk.Align.CENTER)
+        self._task_group.set_hexpand(True)
 
         self._apps_button = Gtk.Button(label="Apps")
         self._apps_button.get_style_context().add_class("apps-button")
@@ -537,11 +533,14 @@ class Taskbar(Gtk.Window):
         self._task_group.pack_start(self._apps_button, False, False, 0)
 
         self._task_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        self._task_group.pack_start(self._task_box, False, False, 0)
+        self._task_scroller = Gtk.ScrolledWindow()
+        self._task_scroller.set_hexpand(True)
+        self._task_scroller.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        self._task_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        self._task_scroller.add(self._task_box)
 
-        self._box.pack_start(left_spacer, True, True, 0)
-        self._box.pack_start(self._task_group, False, False, 0)
-        self._box.pack_start(right_spacer, True, True, 0)
+        self._task_group.pack_start(self._task_scroller, True, True, 0)
+        self._box.pack_start(self._task_group, True, True, 0)
 
         self.refresh()
         GLib.timeout_add(100, self._refresh_tick)
@@ -589,6 +588,28 @@ class Taskbar(Gtk.Window):
     def _on_destroy(self, *_args) -> None:
         self._shell.close()
         Gtk.main_quit()
+
+    def _on_realize(self, *_args) -> None:
+        screen = self.get_screen()
+        if screen is not None:
+            screen.connect("size-changed", self._on_output_size_changed)
+            display = screen.get_display()
+            for signal_name in ("monitor-added", "monitor-removed"):
+                try:
+                    display.connect(signal_name, self._on_output_size_changed)
+                except TypeError:
+                    pass
+        self._on_output_size_changed()
+
+    def _on_output_size_changed(self, *_args) -> bool:
+        GLib.idle_add(self._fit_to_output)
+        return False
+
+    def _fit_to_output(self) -> bool:
+        self.set_default_size(1, self.HEIGHT)
+        self.resize(1, self.HEIGHT)
+        self.queue_resize()
+        return False
 
     def _refresh_tick(self) -> bool:
         self.refresh()

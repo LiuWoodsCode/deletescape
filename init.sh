@@ -1,26 +1,31 @@
 #!/bin/bash
 
+PIDS=()
+
 if [ "$1" = "mobile" ]; then
     python3 shell2.py --mobile &
-    PID1=$!
+    PIDS+=($!)
 
     python3 labwc/mobile/status.py &
-    PID2=$!
+    PIDS+=($!)
+
+    python3 labwc/mobile/home.py &
+    PIDS+=($!)
 else
     python3 shell2.py &
-    PID1=$!
+    PIDS+=($!)
 
     python3 labwc/desktop/taskbar.py &
-    PID2=$!
+    PIDS+=($!)
 fi
 
 cleanup() {
     echo "Stopping processes..."
-    kill "$PID1" "$PID2" 2>/dev/null
-    wait "$PID1" "$PID2" 2>/dev/null
+    kill "${PIDS[@]}" 2>/dev/null
+    wait "${PIDS[@]}" 2>/dev/null
     exit 0
 }
 
 trap cleanup SIGINT SIGTERM
 
-wait "$PID1" "$PID2"
+wait "${PIDS[@]}"

@@ -19,6 +19,7 @@ class StatusBar(Gtk.Window):
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_default_size(1, BAR_HEIGHT)
+        self.connect("realize", self._on_realize)
 
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.TOP)
@@ -40,6 +41,28 @@ class StatusBar(Gtk.Window):
 
         self._update_clock()
         GLib.timeout_add_seconds(1, self._update_clock)
+
+    def _on_realize(self, *_args) -> None:
+        screen = self.get_screen()
+        if screen is not None:
+            screen.connect("size-changed", self._on_output_size_changed)
+            display = screen.get_display()
+            for signal_name in ("monitor-added", "monitor-removed"):
+                try:
+                    display.connect(signal_name, self._on_output_size_changed)
+                except TypeError:
+                    pass
+        self._on_output_size_changed()
+
+    def _on_output_size_changed(self, *_args) -> bool:
+        GLib.idle_add(self._fit_to_output)
+        return False
+
+    def _fit_to_output(self) -> bool:
+        self.set_default_size(1, BAR_HEIGHT)
+        self.resize(1, BAR_HEIGHT)
+        self.queue_resize()
+        return False
 
     def _update_clock(self) -> bool:
         self.clock.set_text(time.strftime("%H:%M"))

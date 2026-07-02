@@ -1,0 +1,321 @@
+IP Guidelines
+
+Last updated: April 29, 2026
+
+
+Purpose of this document
+
+We really love the DDLC fan community and are invested in helping it
+continue to thrive. The purpose of this document is to be transparent
+about our own values. That way, when creators publish DDLC fan work,
+they can be sure they're not stepping on our toes in any way, and have
+confidence that we feel supportive of their contributions.
+
+There are some cases where we need to protect ourselves and our brand.
+For example, it can hurt us when others profit from stealing our
+content, or when something unofficial is misattributed to us.
+
+These guidelines aim to help you understand our boundaries, so that you
+can feel more secure in your creative freedom.
+
+
+Disclaimer
+
+This is not a legal document or a permission document; it does not grant
+you a license to re-use or distribute any Intellectual Property owned by
+Team Salvato. Team Salvato reserves the right to take action against any
+copyright or trademark infringement as we find necessary.
+
+In this document, we are trying to share our feelings and concerns in a
+broad scope. However, there are individual cases where we may choose to
+take action in a way that is not implied by these guidelines.
+
+The contents of this document may change at any time without notice.
+
+
+Fan work (general)
+
+* Fan content of any kind must be obvious that it's fan content and
+not endorsed by Team Salvato. It must also be obvious that you are
+not affiliated with and do not represent Team Salvato.
+* Content creators: If you prominently use DDLC as part of your
+creator branding (like in logos, banners, avatars, VTuber models,
+etc.), it should indicate that you identify primarily as a DDLC
+community content creator, and that followers can expect DDLC-
+related content from you. If your content is not DDLC-focused, it
+would be unfair to use DDLC imagery to strengthen your unrelated
+personal brand.
+
+
+Selling merchandise
+
+Also see Making money from your work <#making-money-from-your-work>.
+
+* Independent artists are welcome to sell their fan work in-person at
+their own convention booths.
+* Independent artists may also sell physical merchandise online, as
+long as they run their own store (e.g. Etsy, Shopify) and coordinate
+the logistics for manufacturing and shipping.
+* Artists may not sell merchandise by handing over the artwork to some
+other company who sells it on their behalf. For example, dropship
+websites such as Redbubble are not permitted.
+* Artists may not sell merchandise containing edited versions of
+official assets—the work must be fully original.
+
+
+Educational use
+
+* You are welcome to use DDLC assets as reference materials in
+academic papers, essays, studies, or other works where the main
+purpose is for use in education or academia.
+
+
+Including official DDLC assets in your fan work
+
+"Official DDLC assets" includes DDLC game assets, as well as all DDLC
+artwork, physical/digital goods, and other materials made or licensed by
+Team Salvato.
+
+For music covers and remixes, see Publishing music <#publishing-music>.
+
+* Any fan work that includes official DDLC or DDLC Plus assets may not
+be sold under any circumstances, online or offline.
+* For free online media content (e.g. YouTube videos), you can enable
+the monetization options on the platform you're hosting on, as long
+as your content is part of a greater transformative work. For
+example, livestreams and videos of commentated DDLC playthroughs can
+have monetization enabled, as well as video essays. In general, if
+you're monetizing, your content should be unique and include DDLC
+assets in a fair-use capacity.
+
+
+Fangames and mods
+
+The point of DDLC fangames is to give DDLC players some great fan-made
+content to enjoy after they've already experienced the original game.
+
+"Fangames" refers to DDLC mods (works that patch the original game) as
+well as standalone DDLC fangames.
+
+* You cannot bundle your fangame with official DDLC assets, like
+artwork and music. To use official DDLC content in your fangame, it
+must be sourced from the player's own local installation of DDLC.
+Your fangame cannot download DDLC on behalf of the player—they
+should already have it downloaded/installed.
+* If your fangame requires assets from DDLC Plus, make it clear to the
+player that they must also own DDLC Plus in order to play your
+fangame. The above restrictions also apply to DDLC Plus content; it
+must be sourced from the player's local installation.
+* Some background artwork from the DDLC Plus Side Stories may be
+included in your fangame, without the need for the player to own a
+copy of DDLC Plus. These include: The morning clubroom, the music
+room, and the stairwell. You can source these by extracting the
+assets from your own copy of DDLC Plus.
+* Fangames must state upon first run that it is a fangame unaffiliated
+with the official Doki Doki Literature Club. They must advise that
+the original game should be completed before playing, as well as
+provide a link to the official website where it can be downloaded
+(https://ddlc.moe <https://ddlc.moe/>).
+* Fangames must always be made available for free. They cannot be sold
+(or monetized) in any capacity.
+* Creators are welcome to accept donations and other paid support for
+their freely-released fan work. However, fangames may not include
+any donation link in the game itself, or encourage the player to
+donate, make purchases, or subscribe to a paid platform from within
+the game. Only include donation information on the pages that host
+the game, not in the game itself.
+* Do not encourage players to play your fangame before DDLC, or
+instead of DDLC. It goes against the spirit of fangame communities,
+which is to give more to those who have already enjoyed the original
+work.
+* Do not allow your fangame to confuse any player into thinking that
+it might be official or affiliated with official content. It should
+not be mistaken as any kind of official DDLC guide, add-on, spin-
+off, or ARG. Fangames should also not be mistaken for DDLC itself.
+
+
+Publishing your fangame/mod to itch.io or other app stores
+
+These guidelines apply specifically if you intend to publish your
+fangame to a centralized game download platform (e.g. itch.io).
+
+These guidelines help achieve two important things. We'd like for DDLC
+fangames to be easily discoverable on such platforms while remaining
+distinct from the original game. But also, we want to make sure that on
+these platforms, all fangames are equally discoverable regardless of
+their title and other metadata.
+
+For existing self-hosted fangames: These guidelines are applicable only
+to the game's page as it appears on centralized platforms, if you wish
+to publish to them. We aren't requiring changes to self-hosted pages.
+
+* You may publish your DDLC fangame on centralized platforms that are
+strictly PC-only (e.g. itch.io, GameJolt, Steam)—no mobile platforms.
+* You must include the phrase "DDLC Fangame" at the beginning or end
+of the game title (as it appears on the platform). For example:
+"Game Title (DDLC Fangame)" or "[DDLC Fangame] Game Title".
+* The logo used to represent your game on the platform must be
+original, and not an edit or recreation of the DDLC logo.
+* The title used to represent your game on the platform must not
+include the phrase "Doki Doki". The reason is that it leads to
+unfairness in discoverability. Including "Doki Doki" in the title
+would disproportionately leverage the algorithm to capture searches
+for the original game (Doki Doki Literature Club), and that's unfair
+to everyone else. Meanwhile, including "DDLC Fangame" in the title
+guarantees discoverability of your game for anyone who wants to find
+DDLC fangames.
+* Except for the screenshots section, your fangame's page and assets
+(banners, hero art, thumbnails, logo, etc.) must not include any
+official DDLC artwork, including edited versions. They should only
+contain original content.
+* The fangame can be distributed as "pay what you want", as long as
+the base price is free (which makes it functionally the same as
+other donationware models).
+
+
+Ports and translations
+
+Ports and translations of DDLC are considered mods, but there are some
+special considerations.
+
+* On the download page, you must make it clear that the game is an
+unofficial port/translation.
+* You may not publish ports or translations of DDLC as a standalone
+game (or fangame) on any centralized game download platform.
+* Porting DDLC should be done only to non-mainstream platforms,
+primarily as a fun/educational exercise, and to contribute something
+neat to a meaningful community (e.g. homebrew on game consoles that
+are no longer being sold).
+
+
+Crossovers
+
+Some communities enjoy making noncommercial fangames that feature a
+mashup crossover of many different game IPs all in one—for example, the
+IWBTG fangame community.
+
+Despite them not being specifically DDLC fangames, there are some
+features of these crossover fangames that help us feel okay about the
+inclusion of DDLC:
+
+* The fangame is being made more for a specific niche community than a
+general audience
+* The IPs are used just for fun/parody and not with the intent of
+making the fangame more popular
+
+If your game doesn't identify as a DDLC fangame or a crossover fangame
+(for example, it's your original IP and does not take place in the DDLC
+universe), then DDLC should not be included in any capacity.
+
+If you want to cameo DDLC in your original game, consider incorporating
+a vague or indirect reference to the game, but avoid any direct usage/
+reference of DDLC's characters.
+
+
+Publishing music
+
+These guidelines pertain to musicians looking to publish DDLC fan music
+to music streaming platforms and music stores (e.g. Spotify, Apple
+Music, etc.). Typically, this does not pertain to social media; it
+primarily concerns those who publish their music through a music
+publication or distribution service. The purpose is to ensure your track
+listings are not confused for official content, and also to avoid issues
+in the licensing and copyright processes.
+
+* If you use lyrics, melodies, or samples from the DDLC OST in your
+track, then your track is considered a cover or a remix. Go through
+your music distributor's cover/remix publishing process to publish
+your song as a cover/remix of the original. You can't publish
+covers/remixes to music streaming services without this licensing
+process being taken care of.
+* If your cover or remix includes samples from the official OST, do
+not publish it to YouTube through a music distributor, unless you
+are absolutely sure YouTube Content ID is disabled.
+* The album art must not include any official DDLC artwork, such as
+logos, character art, or anything else. It cannot contain edited
+versions or recreations of these assets, either—it must be fully
+original content.
+* Never add a Team Salvato composer as a co-artist of your track,
+whether your track is a cover/remix or simply inspired by DDLC.
+* For covers and remixes, you cannot name your song the same as the
+original song. At most, the title of the song can be in the form
+"Your Reality ([Your Name] Cover/Remix)", or "[Original Title] (Your
+Reality Remix)".
+
+
+Use of AI
+
+* Do not use generative AI to depict the DDLC characters (via text,
+visuals, or audio) in DDLC fangames or fangame-related materials
+(e.g. promotional art).
+* Do not monetize any DDLC fan work that was primarily created using
+generative AI.
+* Never upload any official Team Salvato assets to any generative AI
+model, software, or service (e.g. providing game dialogue to a
+chatbot). In doing so, you're helping these services steal our
+content for profit, and we stand firmly against that rampant practice.
+
+
+Making money from your work
+
+When fans pay for your work, they deserve to feel as though they're
+supporting a creator, not just making some arbitrary purchase. We want
+you to find success through the community's desire to support your work.
+That way, we can all maintain a great positive relationship between fans
+and creators.
+
+
+Streaming/Video revenue
+
+* For free online media content (e.g. YouTube videos), you can enable
+the monetization options on the platform you're hosting on, as long
+as your content is part of a greater transformative work. For
+example, livestreams and videos of commentated DDLC playthroughs can
+have monetization enabled, as well as video essays. In general, if
+you're monetizing, your content should be unique and include DDLC
+assets in a fair-use capacity.
+
+
+Physical goods
+
+See Selling merchandise <#selling-merchandise>.
+
+
+Commissions
+
+* You are welcome to accept commissions to produce DDLC fan work,
+whether it's a personal commission or for part of a larger fan
+project (e.g. a fangame).
+
+
+Paywalled digital content (Patreon, etc.)
+
+* Don't force people to spend money to enjoy your primary content.
+Exclusive content is for rewarding supporters, not for locking your
+primary content behind a paywall.
+* Some types of exclusive content are okay for creators to share
+appreciation for their supporters. Sketches, development blogs, and
+community polls are examples of exclusive rewards that are creator-
+and community-focused.
+* Use your best judgment for timed exclusive content, i.e. content
+that remains exclusive to supporters for a limited time before it is
+publicly released. Again, focus on rewarding supporters. If a lot of
+fans are looking forward to your next release, enticing them to pay
+for early access is an exploitative practice—it makes people feel
+left out from the excitement unless they pay you money.
+
+
+Crowdfunding
+
+* Crowdfunding and group buys are a community effort. Only consider
+crowdfunding for producing a limited run of physical goods. The
+purpose of crowdfunding is to cover manufacturing and shipping
+expenses for an item that needs a minimum order quantity.
+* Do not use crowdfunding to pay for digital services, such as hiring
+people to work on a fan project.
+* Do not use crowdfunding to pay yourself. Collaborating with the
+community to bring fan work into existence is not an appropriate
+time to profit from them. Other avenues like donations, Patreon, and
+traditional merchandise sales are ways in which the community can
+support you for your work.
+

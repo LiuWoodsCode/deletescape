@@ -117,6 +117,19 @@ class App:
                     break
         raise "The system cannot find a license agreement in inclusivesans.txt and cannot legally continue."
     
+    def _load_ts_text(self) -> str:
+        candidates = [
+            Path(__file__).with_name("tsip.txt"),
+            Path(__file__).resolve().parents[2] / "tsip.txt",
+        ]
+        for path in candidates:
+            if path.exists():
+                try:
+                    return path.read_text(encoding="utf-8").strip()
+                except OSError:
+                    break
+        raise "The system cannot find a license agreement in tsip.txt and cannot legally continue."
+    
     def _add_expandable_section(self, title: str, text: str, *, expanded: bool = False) -> None:
         section = QWidget()
         section_layout = QVBoxLayout(section)
@@ -356,8 +369,8 @@ class App:
             inc_text = self._load_incsan_text()
             self._add_expandable_section("OFL (Inclusive Sans)", inc_text, expanded=True)
 
-            inc_text = self._load_incsan_text()
-            self._add_expandable_section("Team Salvato IP Guidelines", inc_text, expanded=True)
+            ts_text = self._load_ts_text()
+            self._add_expandable_section("Team Salvato IP Guidelines", ts_text, expanded=True)
 
             self._add_expandable_section("Notice For Team Salvato", team_salavo_text)
 

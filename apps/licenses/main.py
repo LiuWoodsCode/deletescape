@@ -234,7 +234,7 @@ class App:
         inc_text = self._load_incsan_text()
         self._add_expandable_section("OFL (Inclusive Sans)", inc_text, expanded=True)
 
-        ts_text = self._load_tsip_text
+        ts_text = self._load_tsip_text()
         self._add_expandable_section("Team Salvato IP Guidelines", ts_text, expanded=True)
 
         self._add_expandable_section("Notice For Team Salvato", team_salavo_text)

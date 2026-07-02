@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <theme>
+    <name>SalvatoDark</name>
+  <font place="ActiveWindow">
+    <name>Inclusive Sans</name>
+    <size>10</size>
+    <weight>Normal</weight>
+    <slant>Normal</slant>
+  </font>
+
+  <font place="InactiveWindow">
+    <name>Inclusive Sans</name>
+    <size>10</size>
+    <weight>Normal</weight>
+    <slant>Normal</slant>
+  </font>
+  </theme>
+</labwc_config>

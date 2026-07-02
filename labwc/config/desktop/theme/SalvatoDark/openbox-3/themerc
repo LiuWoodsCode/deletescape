@@ -1,0 +1,26 @@
+# Taller titlebar
+window.titlebar.padding.height: 2
+window.titlebar.padding.width: 2
+
+# Left-align title
+window.label.text.justify: Left
+
+# Things
+window.*.grip.bg: parentrelative
+window.*.title.bg: raised  vertical gradient 
+window.*.label.bg: parentrelative
+window.*.button.*.bg: parentrelative
+window.*.handle.bg: raised  vertical gradient 
+
+window.active.title.bg.color: #252526
+window.inactive.title.bg.color: #2D2D30
+
+window.active.label.text.color: #FFFFFF
+window.inactive.label.text.color: #C8C8C8
+
+window.active.button.unpressed.image.color: #FFFFFF
+window.inactive.button.unpressed.image.color: #B0B0B0
+
+# Border colors
+window.active.border.color: #3F3F46
+window.inactive.border.color: #2D2D30

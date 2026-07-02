@@ -1,0 +1,29 @@
+# Taller titlebar
+window.titlebar.padding.height: 2
+window.titlebar.padding.width: 2
+
+# Left-align title
+window.label.text.justify: Left
+
+# Things
+window.*.grip.bg: parentrelative
+window.*.title.bg: raised vertical gradient
+window.*.label.bg: parentrelative
+window.*.button.*.bg: parentrelative
+window.*.handle.bg: raised vertical gradient
+
+# Titlebar colors
+window.active.title.bg.color: #F3F3F3
+window.inactive.title.bg.color: #EAEAEA
+
+# Title text
+window.active.label.text.color: #202020
+window.inactive.label.text.color: #6A6A6A
+
+# Button icons
+window.active.button.unpressed.image.color: #202020
+window.inactive.button.unpressed.image.color: #7A7A7A
+
+# Border colors
+window.active.border.color: #C8C8C8
+window.inactive.border.color: #D8D8D8

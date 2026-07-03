@@ -1,9 +1,5 @@
 <?xml version="1.0"?>
 <labwc_config>
-
-  <theme>
-    <name>MobileZero</name>
-  </theme>
 <windowRules>
   <windowRule identifier="*" serverDecoration="no"/>
   <windowRule identifier="*">

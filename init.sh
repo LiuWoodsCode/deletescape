@@ -58,6 +58,9 @@ if [ "$1" = "mobile" ]; then
 
         python3 labwc/mobile/home.py &
         PIDS+=($!)
+
+        python3 labwc/mobile/virtkb.py &
+        PIDS+=($!)
     fi
 else
     python3 shell2.py &

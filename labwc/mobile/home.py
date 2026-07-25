@@ -544,8 +544,8 @@ class Taskbar(Gtk.Window):
         self._task_group.pack_start(self._task_scroller, True, True, 0)
         self._box.pack_start(self._task_group, True, True, 0)
 
-        self._settings_button = Gtk.Button(label="⚙")
-        self._settings_button.set_tooltip_text("Settings")
+        self._settings_button = Gtk.Button(label="VK")
+        self._settings_button.set_tooltip_text("Virtual keyboard")
         self._settings_button.connect("clicked", self._on_settings_clicked)
 
         self._box.pack_end(self._settings_button, False, False, 0)
